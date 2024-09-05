@@ -27,7 +27,7 @@ all: Test
 	$(NVCC) $(CUFLAGS) -c $< -o $(basename $@).o
 
 Test: $(CUOBJS) $(COBJS)
-	$(NVCC) -o Test $(CUOBJS) $(COBJS) $(LIBDIR) $(LDFLAGS) -lcudart -lcuda -lcublas -lcudnn
+	$(NVCC) -o Test $(CUOBJS) $(COBJS) $(LIBDIR) $(LDFLAGS) -lcudart -lcuda -lcublas
 
 clean:
 	find . -name "*.o" -exec rm -f '{}' ';'

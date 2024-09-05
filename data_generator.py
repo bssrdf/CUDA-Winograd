@@ -114,14 +114,16 @@ def onebyone_generator(input_channel = 256, output_channel = 1024, feature_map_s
 
 
 if __name__ == '__main__':
-	bias_generator(output_channel = 128)
-	print('Biases generated')
+    size = int(sys.argv[1])   
 
-	input_generator(input_channel = 128)
-	print('Input generated')
+    bias_generator(output_channel = size)
+    print('Biases generated')
 
-	weight_generator(128, 128)
-	print('Weights generated')
+    input_generator(input_channel = size)
+    print('Input generated')
 
-	onebyone_generator()
-	print('Parameters for 1*1 conv generated')
+    weight_generator(size, size)
+    print('Weights generated')
+
+    onebyone_generator()
+    print('Parameters for 1*1 conv generated')
