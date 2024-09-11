@@ -35,5 +35,5 @@ Our Kernel | 58us | 55us | 186us | 181us
 
 ## Memory Layout
 
-The layout assumes **NHWC** format, i.e., all pixel values for each chanel are congiuous in memory.
+The layout assumes **NHWC** format, i.e., all pixel values for each channel are contiguous in memory.
 
