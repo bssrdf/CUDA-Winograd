@@ -35,6 +35,11 @@ __global__ void kernel_128_winograd_BtdB(float *pInputs, float *pOutputs) {
 	int tmp[6] = {0, 768, 1536, 2304, 3072, 3840}; // 768 = 6*128
 	for (int i = 0; i < 6; i++) {
 		input[c_input + tmp[i]] = pInputs[c_glb_start + i*stride_r];
+		if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 
+		      && Iny1 == 0 && Inz == 0){
+		    //    && Iny1 == 5 && Inz == 127){
+            printf("%d, %d, %f\n", i, c_glb_start+i*stride_r, input[c_input + tmp[i]]);
+		}
 	}
 	__syncthreads();
 
@@ -43,6 +48,10 @@ __global__ void kernel_128_winograd_BtdB(float *pInputs, float *pOutputs) {
 		case 0:
 			for (int j = 0; j < 6; j++) {
 				BTd[j] = d(input, 0, j, Inz)*4 - d(input, 2, j, Inz)*5 + d(input, 4, j, Inz);
+				if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 
+		            && Iny1 == 0 && Inz == 0){
+				    printf("%d: %f, %f, %f\n", j, d(input, 0, j, Inz), d(input, 2, j, Inz), d(input, 4, j, Inz));
+				}
 			}
 			break;
 		case 1:
@@ -159,24 +168,28 @@ __global__ void kernel_128_winograd_AtIA(float *pInputs, float *pBiases, float *
 	switch(Iny) {
 		case 0:
 			x = Inx*6;
-			o = scale*(input[x]+input[x+1]+input[x+2]+input[x+3]+input[x+4])+ bias;
+			// o = scale*(input[x]+input[x+1]+input[x+2]+input[x+3]+input[x+4])+ bias;
+			o = (input[x]+input[x+1]+input[x+2]+input[x+3]+input[x+4]);
 			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+1)*128 + kz] = o > 0 ? o : 0;
 			break;
 		case 1:
 			x = Inx*6;
-			o = scale*(input[x+1] - input[x+2] + 2*input[x+3] - 2*input[x+4]) + bias;
+			// o = scale*(input[x+1] - input[x+2] + 2*input[x+3] - 2*input[x+4]) + bias;
+			o = (input[x+1] - input[x+2] + 2*input[x+3] - 2*input[x+4]);
 			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+2)*128 + kz] = o > 0 ? o : 0;
 			break;
 		case 2:
 			if (Tiley == 3) break;
 			x = Inx*6;
-			o = scale*(input[x+1] + input[x+2] + 4*input[x+3] + 4*input[x+4]) + bias;
+			// o = scale*(input[x+1] + input[x+2] + 4*input[x+3] + 4*input[x+4]) + bias;
+			o = (input[x+1] + input[x+2] + 4*input[x+3] + 4*input[x+4]);
 			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+3)*128 + kz] = o > 0 ? o : 0;
 			break;
 		case 3:
 			if (Tiley == 3) break;
 			x = Inx*6;
-			o = scale*(input[x+1] - input[x+2] + 8*input[x+3] - 8*input[x+4] + input[x+5]) + bias;
+			// o = scale*(input[x+1] - input[x+2] + 8*input[x+3] - 8*input[x+4] + input[x+5]) + bias;
+			o = (input[x+1] - input[x+2] + 8*input[x+3] - 8*input[x+4] + input[x+5]);
 			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+4)*128 + kz] = o > 0 ? o : 0;
 			break;
 	}
@@ -215,6 +228,7 @@ __global__ void kernel_128_OuterProduct_128(float *A, float *B, float *C) {
 int kernel_128() {
 	float *input_ = get_parameter(inputName128, 16*16*128);
 	float *bias = get_parameter(biasName128, 128);
+	float *W = get_parameter(weight_NCHW_Name128, 3*3*128*128);
 	float *input, *output, *l_weights, *l_bias;
 	uint64_t nT1 = 0, nT2 = 0, nT1_cudnn = 0, nT2_cudnn = 0;
 	cudaError_t s;
@@ -256,6 +270,23 @@ int kernel_128() {
 	cudaMemcpy(l_bnScale, bnScale, nBias<<2, cudaMemcpyHostToDevice);
 	float tmp_winograd[nOutput];
 
+	float *conv_cpu =  (float*)malloc(14*14*128*4);
+
+
+  	for(int i = 0; i < 16*16*128; i++){
+		if(abs(input_[i] - (-0.442436)) < 1.e-7){
+		   printf("found at %d \n", i);
+		   break;
+	    } 
+	}
+
+
+    printf("input [");
+	for(int i = 0; i < 6; i++){
+		printf("%f, ", input_[128+i*128*16]);
+	}
+	printf("]\n");
+
 	
 	/*  2. Computing  */
 	nT1 = getTimeMicroseconds64();
@@ -285,8 +316,9 @@ int kernel_128() {
 	free(bnScale);
 	free(bnBias);
 
-
+    compute_cpu(input_, W, conv_cpu, 16, 128, 1);
 //	output_checker(tmp_winograd, tmp_cudnn, 14, 128, 1);
+	output_checker(tmp_winograd, conv_cpu, 14, 128, 1);
 
 	return ((nT2-nT1) << 16);
 }

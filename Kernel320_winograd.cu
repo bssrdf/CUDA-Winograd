@@ -10,7 +10,7 @@
 
 //#include "cudnn.h"
 #include "util.h"
-#include "Kernel256_winograd.h"
+#include "Kernel320_winograd.h"
 
 
 #define cudaCheckError() {																\
@@ -24,7 +24,7 @@
 #define MY_KERNEL 0
 
 #define d(input, i, j, Inz) ( input[Inz + i*768 + (j<<7)] )
-__global__ void kernel_256_winograd_BtdB(float *pInputs, float *pOutputs) {
+__global__ void kernel_320_winograd_BtdB(float *pInputs, float *pOutputs) {
 	int Inx = blockIdx.x<<2, Iny0 = blockIdx.y<<2, Part = blockIdx.z, Iny1 = threadIdx.y, Inz = threadIdx.x;
 	int Iny = Iny0+Iny1, stride_r = 4096, stride_c = 256; // 4096 = 16*256
 	int c_glb_start = Inx*stride_r + Iny*stride_c + Inz + (Part<<7), c_input = Iny1*128 + Inz;
@@ -34,11 +34,6 @@ __global__ void kernel_256_winograd_BtdB(float *pInputs, float *pOutputs) {
 	int stride_768[6] = {0, 768, 1536, 2304, 3072, 3840}; // 768 = 6*128
 	for (int i = 0; i < 6; i++) {
 		input[c_input + stride_768[i]] = pInputs[c_glb_start + i*stride_r];
-		if(blockIdx.x == 0 && blockIdx.y == 2 && blockIdx.z == 0 
-		      && Iny1 == 0 && Inz == 0){
-		    //    && Iny1 == 5 && Inz == 127){
-            printf("%d, %d \n", i, c_glb_start+i*stride_r);
-		}
 	}
 	__syncthreads();
 
@@ -123,7 +118,7 @@ __global__ void kernel_256_winograd_BtdB(float *pInputs, float *pOutputs) {
 	}
 }
 
-__global__ void kernel_256_winograd_AtIA(float *pInputs, float *pBiases, float *pScales, float *pOutputs) {
+__global__ void kernel_320_winograd_AtIA(float *pInputs, float *pBiases, float *pScales, float *pOutputs) {
 	int Tilex = blockIdx.x, Tiley = blockIdx.y, Iny = threadIdx.y, kz = blockIdx.z, Inx = threadIdx.x;
 	int c_input = Inx*6 + Iny;
 
@@ -185,7 +180,7 @@ __global__ void kernel_256_winograd_AtIA(float *pInputs, float *pBiases, float *
 	}
 }
 
-__global__ void kernel_256_OuterProduct_256(float *A, float *B, float *C) {
+__global__ void kernel_320_OuterProduct_320(float *A, float *B, float *C) {
 	int Tile = blockIdx.x, Part = blockIdx.y, tX = threadIdx.x, tY = threadIdx.y;
 	int c_input = tY*256 + tX, c_kernel = c_input, 
 	   T_offset = (Tile<<12) + (Part<<11) + c_input, 
@@ -224,9 +219,9 @@ __global__ void kernel_256_OuterProduct_256(float *A, float *B, float *C) {
 	C[T_offset+1024] = out[c_input+1024];
 }
 
-int kernel_256() {
-	float *input_ = get_parameter(inputName256, 16*16*256);
-	float *bias = get_parameter(biasName256, 256);
+int kernel_320() {
+	float *input_ = get_parameter(inputName320, 16*16*320);
+	float *bias = get_parameter(biasName320, 320);
 	float *input, *output, *l_weights, *l_bias;
 	uint64_t nT1 = 0, nT2 = 0, nT1_cudnn = 0, nT2_cudnn = 0;
 	cudaError_t s;
@@ -238,8 +233,8 @@ int kernel_256() {
 	// My Kernel
 
 	/////////////////////////////////
-	float *kernel = get_parameter(weight_winograd_Name256, 36*256*256), *t_input, *ip;
-	int nInput = 16*16*256, nOutput = 16*16*256, nWeights = 36*256*256, nBias = 256, nTransInput = 16*6*6*256, nInnerProd = 16*6*6*256;
+	float *kernel = get_parameter(weight_winograd_Name320, 36*320*320), *t_input, *ip;
+	int nInput = 16*16*320, nOutput = 16*16*320, nWeights = 36*320*320, nBias = 320, nTransInput = 16*6*6*320, nInnerProd = 16*6*6*320;
 	float *l_bnBias, *l_bnScale, *bnBias, *bnScale;
 
 	cudaMalloc((void **) &input, nInput<<3);
@@ -259,8 +254,8 @@ int kernel_256() {
 	cudaMemcpy(l_weights, kernel, nWeights<<2, cudaMemcpyHostToDevice);
 	cudaMemcpy(l_bias, bias, nBias<<2, cudaMemcpyHostToDevice);
 
-	bnBias = get_parameter(bnBias_winograd_Name256, 256);
-	bnScale = get_parameter(bnScale_winograd_Name256, 256);
+	bnBias = get_parameter(bnBias_winograd_Name320, 320);
+	bnScale = get_parameter(bnScale_winograd_Name320, 320);
 	cudaMalloc((void **) &l_bnBias, nBias<<2);
 	cudaMalloc((void **) &l_bnScale, nBias<<2);
 	cudaMemcpy(l_bnBias, bnBias, nBias<<2, cudaMemcpyHostToDevice);
@@ -270,9 +265,9 @@ int kernel_256() {
 
 	nT1 = getTimeMicroseconds64();
 
-	kernel_256_winograd_BtdB <<<dim3(4, 4, 2), dim3(128, 6), (6*6*128)<<2 >>> (input, t_input);
-	kernel_256_OuterProduct_256<<<dim3(36, 2), dim3(256, 4), (8*256 + 32*256 + 8*256)<<2 >>> (t_input, l_weights, ip);
-	kernel_256_winograd_AtIA <<<dim3(4, 4, 256), dim3(6, 6), ((6*6)<<2)>>> (ip, l_bnBias, l_bnScale, output);
+	kernel_320_winograd_BtdB <<<dim3(4, 4, 2), dim3(128, 6), (6*6*128)<<2 >>> (input, t_input);
+	kernel_320_OuterProduct_320<<<dim3(36, 2), dim3(320, 4), (8*320 + 32*320 + 8*320)<<2 >>> (t_input, l_weights, ip);
+	kernel_320_winograd_AtIA <<<dim3(4, 4, 320), dim3(6, 6), ((6*6)<<2)>>> (ip, l_bnBias, l_bnScale, output);
 	//cudaCheckError();
 	cudaDeviceSynchronize();
 	
@@ -296,7 +291,7 @@ int kernel_256() {
 
 
 
-//	output_checker(tmp, tmp_cudnn, 14, 256, 1);
+//	output_checker(tmp, tmp_cudnn, 14, 320, 1);
 
 	return ((nT2-nT1) << 16);
 }

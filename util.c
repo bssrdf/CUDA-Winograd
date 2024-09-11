@@ -46,18 +46,65 @@ float* get_parameter(const char* filename, int size) {
 float output_checker(float* A, float* B, int len, int channel, int shift) {
   int error_cnt = 0, i, j, k;
   float max_error = 0;
+  int ie=-1, je=-1, ke = -1;
+  float r_win = 0.f, r_cpu = 0.f;
   for (i = 0; i < len; i++) {
     for (j = 0; j < len; j++) {
       for (k = 0; k < channel; k++) {
         float diff = fabs(
             A[((i + shift) * (len + 2 * shift) + j + shift) * channel + k] -
             B[(i * len + j) * channel + k]);
+        // if (k == 0)
+        //    printf(" i, j, wi, cpu:  %d, %d, %f, %f \n", i, j, 
+        //         A[((i + shift) * (len + 2 * shift) + j + shift) * channel + k],
+        //           B[(i * len + j) * channel + k]);
         if (diff > 1e-5)
           error_cnt++;
-        if (diff > max_error)
+        if (diff > max_error){
           max_error = diff;
+          r_win = A[((i + shift) * (len + 2 * shift) + j + shift) * channel + k];
+          r_cpu =  B[(i * len + j) * channel + k];
+          ie = i; je = j; ke = k;
+        }
       }
     }
   }
   printf("[max_error: %f][error_cnt: %d]\n", max_error, error_cnt);
+  printf("[max_error at (i,j,k) : (%d, %d, %d) \n", ie, je, ke);
+  printf("[wino: %f][cpu: %f]\n", r_win, r_cpu);
+}
+
+
+void compute_cpu(float* A, float* W,  float *C, int len, int channel, int shift){
+    int i, j, k;
+    int stride = len*channel;
+    
+      for (j = 1; j < len - 1; j++){
+        for (i = 1; i < len - 1; i++){
+
+          for (int l = 0; l < channel; l++){
+          float sum = 0.f;
+          for (k = 0; k < channel; k++){
+            for(int ii=-1; ii < 2; ii++){ 
+              for(int jj=-1; jj < 2; jj++){ 
+                 int x = i+ii, y = j+jj; 
+                //  int idx1 = x+k*len+y*stride;
+                //  int idx2 = l*channel*channel+k*channel+(ii+1)*3+jj+1;
+                //  printf("%d, %d \n", idx1, idx2);
+                //  sum += A[x+k*len+y*stride]*W[l*channel*3*3+k*3*3+(ii+1)*3+jj+1];
+                 sum += A[k + (x * len + y)*channel]*W[l*channel*3*3+k*3*3+(ii+1)*3+jj+1];
+                //  if(fabs(sum) > 1.e10)
+                //     printf("wrong: %f, %f \n", A[x+k*len+y*stride],W[l*channel*3*3+k*3*3+(ii+1)*3+jj+1]);
+              }
+            }
+          }
+          // int idx3 = i+l*(len-2)+j*(len-2)*channel;
+          // printf("idx3 = %d \n", idx3);
+          C[((i-1) * (len-2) + j-1) * channel + l] = sum > 0? sum : 0.f;    
+      }
+    }
+    }
+
+      
+
 }

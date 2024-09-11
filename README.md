@@ -32,3 +32,8 @@ Kernals | 512 / 128 | 128 / 512 | 1024 / 256 | 256 / 1024
 Operations | Gemm + BN + ReLU | Gemm + BN | Gemm + BN + ReLU | Gemm + BN + ReLU
 Cudnn  | 119us | 115us | 219us | 214us
 Our Kernel | 58us | 55us | 186us | 181us
+
+## Memory Layout
+
+The layout assumes **NHWC** format, i.e., all pixel values for each chanel are congiuous in memory.
+
