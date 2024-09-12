@@ -8,10 +8,11 @@
 #include "Kernel128_winograd.h"
 #include "Kernel256_one.h"
 #include "Kernel256_winograd.h"
+#include "Kernel160_winograd.h"
 #include "util.h"
 
 int main(int argc, char** argv) {
-  int nTest = 1, sum = 0, sum_cudnn = 0, i;
+  int nTest = 20, sum = 0, sum_cudnn = 0, i;
   cudaSetDevice(0);
 
   int mode = 0;
@@ -40,6 +41,9 @@ int main(int argc, char** argv) {
         break;
       case 5:
         res = kernel_256_1_out();
+        break;
+      case 6:
+        res = kernel_160();
         break;
     }
     if (i > 1) {

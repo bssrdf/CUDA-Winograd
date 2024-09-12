@@ -163,7 +163,9 @@ __global__ void kernel_128_winograd_AtIA(float *pInputs, float *pBiases, float *
 	input[c_input] = tmp;
 	__syncthreads();
 
-	if (Inx > 3 || (Tilex == 3 && Inx > 1)) return;
+    // The matrix At has only 4 rows, so only needs 4 threads (0-3) in x direction 
+	// if (Inx > 3 || (Tilex == 3 && Inx > 1)) return;
+	if (Inx > 3) return;
 	
 	int x;
 	float o;
@@ -172,6 +174,9 @@ __global__ void kernel_128_winograd_AtIA(float *pInputs, float *pBiases, float *
 			x = Inx*6;
 			// o = scale*(input[x]+input[x+1]+input[x+2]+input[x+3]+input[x+4])+ bias;
 			o = (input[x]+input[x+1]+input[x+2]+input[x+3]+input[x+4]);
+			if(Tilex == 0 && Tiley == 0 && kz == 0 && Iny == 0 && Inx == 0){
+				printf("idx = %d \n", (((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+1)*128 + kz);
+			} 
 			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+1)*128 + kz] = o > 0 ? o : 0;
 			break;
 		case 1:
@@ -181,14 +186,14 @@ __global__ void kernel_128_winograd_AtIA(float *pInputs, float *pBiases, float *
 			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+2)*128 + kz] = o > 0 ? o : 0;
 			break;
 		case 2:
-			if (Tiley == 3) break;
+			// if (Tiley == 3) break;
 			x = Inx*6;
 			// o = scale*(input[x+1] + input[x+2] + 4*input[x+3] + 4*input[x+4]) + bias;
 			o = (input[x+1] + input[x+2] + 4*input[x+3] + 4*input[x+4]);
 			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+3)*128 + kz] = o > 0 ? o : 0;
 			break;
 		case 3:
-			if (Tiley == 3) break;
+			// if (Tiley == 3) break;
 			x = Inx*6;
 			// o = scale*(input[x+1] - input[x+2] + 8*input[x+3] - 8*input[x+4] + input[x+5]) + bias;
 			o = (input[x+1] - input[x+2] + 8*input[x+3] - 8*input[x+4] + input[x+5]);
@@ -308,6 +313,7 @@ int kernel_128() {
 
 	kernel_128_winograd_BtdB <<<dim3(4, 4), dim3(128, 6), (6*6*128)<<2 >>> (input, t_input);
 	kernel_128_OuterProduct_128<<<dim3(36, 2), dim3(128, 8), (8*128 + 64*128 + 8*128)<<2 >>> (t_input, l_weights, ip);
+	// kernel_128_OuterProduct_128<<<dim3(36, 2), dim3(128, 8), (8*128 + 32*128 + 8*128)<<2 >>> (t_input, l_weights, ip);
 	kernel_128_winograd_AtIA <<<dim3(4, 4, 128), dim3(6, 6), ((6*6)<<2)>>> (ip, l_bnBias, l_bnScale, output);
 	//cudaCheckError();
 	cudaDeviceSynchronize();
@@ -331,10 +337,10 @@ int kernel_128() {
 	free(bnScale);
 	free(bnBias);
 
-    nT1 = getTimeMicroseconds64();
+    nT1_cudnn = getTimeMicroseconds64();
 	compute_cpu(input_, W, conv_cpu, 16, 128, 1);
-    nT2 = getTimeMicroseconds64();
-	printf("TotalTime = %d us\n", nT2-nT1);  
+    nT2_cudnn = getTimeMicroseconds64();
+	printf("TotalTime = %d us\n", nT2_cudnn-nT1_cudnn);  
     
 //	output_checker(tmp_winograd, tmp_cudnn, 14, 128, 1);
 	output_checker(tmp_winograd, conv_cpu, 14, 128, 1);
