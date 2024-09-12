@@ -36,4 +36,5 @@ Our Kernel | 58us | 55us | 186us | 181us
 ## Memory Layout
 
 The layout assumes **NHWC** format, i.e., all pixel values for each channel are contiguous in memory.
+The winograd weight tensor assums **HWIO** format, i.e., the output channel the simension that varies most fast
 

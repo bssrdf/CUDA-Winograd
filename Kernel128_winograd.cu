@@ -200,21 +200,34 @@ __global__ void kernel_128_winograd_AtIA(float *pInputs, float *pBiases, float *
 
 __global__ void kernel_128_OuterProduct_128(float *A, float *B, float *C) {
 	int Tile = blockIdx.x, Part = blockIdx.y, tX = threadIdx.x, tY = threadIdx.y;
-	int c_input = tY*128 + tX, c_kernel = c_input, T_offset = (Tile<<11) + (Part<<10) + c_input, B_offset = (Tile<<14) + c_kernel;
-	
+	int c_input = tY*128 + tX, c_kernel = c_input, 
+	    T_offset = (Tile<<11) + (Part<<10) + c_input, 
+		B_offset = (Tile<<14) + c_kernel; // each tile move passes over 128*128 kernel values
+		
 	extern __shared__ float input[];
-	float *kernel = input + 1024, *out = kernel + 8192;
+	float *kernel = input + 1024, *out = kernel + 4096; // 8192; //4096 ok?
 	int B_stride[32] = {0, 128, 256, 384, 512, 640, 768, 896, 1024, 1152, 1280, 1408, 1536, 1664, 1792, 1920, 2048, 2176, 2304, 2432, 2560, 2688, 2816, 2944, 3072, 3200, 3328, 3456, 3584, 3712, 3840, 3968};//, 4096, 4224, 4352, 4480, 4608, 4736, 4864, 4992, 5120, 5248, 5376, 5504, 5632, 5760, 5888, 6016, 6144, 6272, 6400, 6528, 6656, 6784, 6912, 7040, 7168, 7296, 7424, 7552, 7680, 7808, 7936, 8064};
 	out[c_input] = 0.0f;
 
 	input[c_input] = A[T_offset]; // 36*2 blocks, each block loads 128*8 values with 128*8 threads (1 value/t) 
 
+    // we need to compute 128 products and sum them up. 
+	// the loop below iterates 4 times and each step computes 32 products and accumulates the partial sum in shared memory
+	// each thread block will process 128*128 kernel values
+	// 36 blocks in each row (2 rows in total) will use the same 128*128 kernel values
 	for (int k = 0; k < 4; k++) {
-		int B_start = B_offset + (k<<12); // 32*64
+
+		int B_start = B_offset + (k<<12); // 32*128
+		// each thread loads 4 kernel values
+		// the whole thread block can load 128*8*4 = 128*32 = 4096 values
+		// incrementing k by 1 will shift by 4096 = 128*32 values 
 		kernel[c_kernel] = B[B_start], kernel[c_kernel+1024] = B[B_start+1024];
 		kernel[c_kernel+2048] = B[B_start+2048], kernel[c_kernel+3072] = B[B_start+3072];
 		__syncthreads();
 
+        // after sync, all 32 kernel values are ready to be used? How?
+		// 4096 / 128 = 32, each thread gets 32 values to use
+		// the threads with the same tY share the same 32 values, but how?  
 		float sum = 0;
 		int y_tmp = (tY<<7)+(k<<5);
 		for (int j = 0; j < 32; j++) {

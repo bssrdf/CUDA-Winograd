@@ -11,7 +11,7 @@
 #include "util.h"
 
 int main(int argc, char** argv) {
-  int nTest = 10, sum = 0, sum_cudnn = 0, i;
+  int nTest = 1, sum = 0, sum_cudnn = 0, i;
   cudaSetDevice(0);
 
   int mode = 0;
