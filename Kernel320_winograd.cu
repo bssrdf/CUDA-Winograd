@@ -194,8 +194,6 @@ __global__ void kernel_320_OuterProduct_320(float *A, float *B, float *C) {
 	
 	extern __shared__ float input[];
 	float *kernel = input + 640, *out = kernel + 6400; //3200 = 320*2*10
-	// int B_stride[32]    = {0, 320, 320, 480, 640, 800, 960, 1120, 1280, 1440, 3200, 1760, 1920, 2080, 2240, 2400, 2560, 2720, 2880, 3040, 3200, 3360, 3520, 3680, 3840, 4000, 4320, 4320, 4480, 4640, 4800, 4960};
-	// int B_stride[20]    = {0, 160, 320, 480, 640, 800, 960, 1120, 1280, 1440, 3200, 1760, 1920, 2080, 2240, 2400, 2560, 2720, 2880, 3040};
 	int B_stride[20] = {0, 320, 640, 960, 1280, 1600, 1920, 2240, 2560, 2880, 3200, 3520, 3840, 4160, 4480, 4800, 5120, 5440, 5760, 6080};
 	out[c_input] = 0.0f;
 
@@ -245,6 +243,10 @@ int kernel_320() {
 	float *W = get_parameter(weight_NCHW_Name320, 3*3*320*320);
 	float *input, *output, *l_weights, *l_bias;
 	uint64_t nT1 = 0, nT2 = 0, nT1_cudnn = 0, nT2_cudnn = 0;
+
+	uint64_t st1 = 0, st2 = 0, st3 = 0;
+	uint64_t et1 = 0, et2 = 0, et3 = 0;
+
 	cudaError_t s;
 
 
@@ -288,16 +290,11 @@ int kernel_320() {
 	nT1 = getTimeMicroseconds64();
 
 	kernel_320_winograd_BtdB <<<dim3(4, 4, 2), dim3(160, 6), (6*6*160)<<2 >>> (input, t_input);
-	printf("transform input done \n");
-	cudaCheckError();
 	kernel_320_OuterProduct_320<<<dim3(36, 8), dim3(320, 2), (2*320 + 10*2*320 + 2*320)<<2 >>> (t_input, l_weights, ip);
-	printf("out prod done \n");
-	cudaCheckError();
 	kernel_320_winograd_AtIA <<<dim3(4, 4, 320), dim3(6, 6), ((6*6)<<2)>>> (ip, l_bnBias, l_bnScale, output);
-	printf("transform output done \n");
-	cudaCheckError();
+	// cudaCheckError();
 	cudaDeviceSynchronize();
-	
+
 	nT2 = getTimeMicroseconds64();
 	printf("TotalTime = %d us\n", nT2-nT1); 
 
@@ -309,27 +306,32 @@ int kernel_320() {
 	cudaFree(output);
 	cudaFree(l_weights);
 	cudaFree(l_bias);
+	cudaFree(l_bnBias);
+	cudaFree(l_bnScale);
 	cudaFree(ip);
+	cudaFree(input);
+
 
 	free(kernel);
 	free(bnScale);
 	free(bnBias);
+	free(bias);
 	
 
-	float *conv_cpu =  (float*)malloc(14*14*320*4);
+	// float *conv_cpu =  (float*)malloc(14*14*320*4);
 
-    nT1_cudnn = getTimeMicroseconds64();
-	compute_cpu(input_, W, conv_cpu, 16, 320, 1);
-    nT2_cudnn = getTimeMicroseconds64();
-	printf("TotalTime = %d us\n", nT2_cudnn-nT1_cudnn);  
+    // nT1_cudnn = getTimeMicroseconds64();
+	// compute_cpu(input_, W, conv_cpu, 16, 320, 1);
+    // nT2_cudnn = getTimeMicroseconds64();
+	// printf("TotalTime = %d us\n", nT2_cudnn-nT1_cudnn);  
 	
 	free(input_);
 	free(W);
 
 
 //	output_checker(tmp, tmp_cudnn, 14, 320, 1);
-	output_checker(tmp, conv_cpu, 14, 320, 1);
-	free(conv_cpu);
+	// output_checker(tmp, conv_cpu, 14, 320, 1);
+	// free(conv_cpu);
 	free(tmp);
 
 	return ((nT2-nT1) << 16);
