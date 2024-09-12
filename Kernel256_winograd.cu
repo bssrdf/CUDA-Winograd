@@ -34,11 +34,11 @@ __global__ void kernel_256_winograd_BtdB(float *pInputs, float *pOutputs) {
 	int stride_768[6] = {0, 768, 1536, 2304, 3072, 3840}; // 768 = 6*128
 	for (int i = 0; i < 6; i++) {
 		input[c_input + stride_768[i]] = pInputs[c_glb_start + i*stride_r];
-		if(blockIdx.x == 0 && blockIdx.y == 2 && blockIdx.z == 0 
-		      && Iny1 == 0 && Inz == 0){
-		    //    && Iny1 == 5 && Inz == 127){
-            printf("%d, %d \n", i, c_glb_start+i*stride_r);
-		}
+		// if(blockIdx.x == 0 && blockIdx.y == 2 && blockIdx.z == 0 
+		//       && Iny1 == 0 && Inz == 0){
+		//     //    && Iny1 == 5 && Inz == 127){
+        //     printf("%d, %d \n", i, c_glb_start+i*stride_r);
+		// }
 	}
 	__syncthreads();
 

@@ -23,17 +23,17 @@
 
 #define MY_KERNEL 0
 
-#define d(input, i, j, Inz) ( input[Inz + i*768 + (j<<7)] )
+#define d(input, i, j, Inz) ( input[Inz + i*960 + (j*160)] )
 __global__ void kernel_320_winograd_BtdB(float *pInputs, float *pOutputs) {
 	int Inx = blockIdx.x<<2, Iny0 = blockIdx.y<<2, Part = blockIdx.z, Iny1 = threadIdx.y, Inz = threadIdx.x;
-	int Iny = Iny0+Iny1, stride_r = 4096, stride_c = 256; // 4096 = 16*256
-	int c_glb_start = Inx*stride_r + Iny*stride_c + Inz + (Part<<7), c_input = Iny1*128 + Inz;
+	int Iny = Iny0+Iny1, stride_r = 5120, stride_c = 320; // 5120 = 16*320
+	int c_glb_start = Inx*stride_r + Iny*stride_c + Inz + Part*160, c_input = Iny1*160 + Inz;
 
 	extern __shared__ float input[];
 
-	int stride_768[6] = {0, 768, 1536, 2304, 3072, 3840}; // 768 = 6*128
+	int stride_960[6] = {0, 960, 1920, 2880, 3840, 4800}; // 960 = 6*160
 	for (int i = 0; i < 6; i++) {
-		input[c_input + stride_768[i]] = pInputs[c_glb_start + i*stride_r];
+		input[c_input + stride_960[i]] = pInputs[c_glb_start + i*stride_r];
 	}
 	__syncthreads();
 
@@ -72,9 +72,9 @@ __global__ void kernel_320_winograd_BtdB(float *pInputs, float *pOutputs) {
 	}
 	__syncthreads();
 
-	int tmp_offset = Iny1*768+Inz;
+	int tmp_offset = Iny1*960+Inz;
 	for (int i = 0; i < 6; i++) {
-		input[tmp_offset + i*128] = BTd[i];
+		input[tmp_offset + i*160] = BTd[i];
 	}
 	__syncthreads();
 
@@ -114,7 +114,7 @@ __global__ void kernel_320_winograd_BtdB(float *pInputs, float *pOutputs) {
 	__syncthreads();
 
 	for (int i = 0; i < 6; i++) {
-		pOutputs[(Iny1 + i*6)*4096 + (blockIdx.x*4+blockIdx.y)*256 + Inz + (Part<<7)] = BTdB[i];
+		pOutputs[(Iny1 + i*6)*5120 + ((blockIdx.x<<2)+blockIdx.y)*320 + Inz + Part*160] = BTdB[i];
 	}
 }
 
@@ -125,7 +125,7 @@ __global__ void kernel_320_winograd_AtIA(float *pInputs, float *pBiases, float *
 	__shared__ float bias, scale;
 	extern __shared__ float input[];
 
-	input[c_input] = pInputs[c_input*16*256 + (Tilex*4+Tiley)*256 + kz];
+	input[c_input] = pInputs[c_input*16*320 + (Tilex*4+Tiley)*320 + kz];
 	bias = pBiases[kz];
 	scale = pScales[kz];
 	__syncthreads();
@@ -157,71 +157,92 @@ __global__ void kernel_320_winograd_AtIA(float *pInputs, float *pBiases, float *
 	switch(Iny) {
 		case 0:
 			x = Inx*6;
-			o = scale*(input[x]+input[x+1]+input[x+2]+input[x+3]+input[x+4]) + bias;
-			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+1)*256 + kz] = o > 0 ? o : 0;
+			// o = scale*(input[x]+input[x+1]+input[x+2]+input[x+3]+input[x+4]) + bias;
+			o = (input[x]+input[x+1]+input[x+2]+input[x+3]+input[x+4]);
+			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+1)*320 + kz] = o > 0 ? o : 0;
 			break;
 		case 1:
 			x = Inx*6;
-			o = scale*(input[x+1] - input[x+2] + 2*input[x+3] - 2*input[x+4]) + bias;
-			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+2)*256 + kz] = o > 0 ? o : 0;
+			// o = scale*(input[x+1] - input[x+2] + 2*input[x+3] - 2*input[x+4]) + bias;
+			o = (input[x+1] - input[x+2] + 2*input[x+3] - 2*input[x+4]);
+			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+2)*320 + kz] = o > 0 ? o : 0;
 			break;
 		case 2:
 			if (Tiley == 3) break;
 			x = Inx*6;
-			o = scale*(input[x+1] + input[x+2] + 4*input[x+3] + 4*input[x+4]) + bias;
-			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+3)*256 + kz] = o > 0 ? o : 0;
+			// o = scale*(input[x+1] + input[x+2] + 4*input[x+3] + 4*input[x+4]) + bias;
+			o = (input[x+1] + input[x+2] + 4*input[x+3] + 4*input[x+4]);
+			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+3)*320 + kz] = o > 0 ? o : 0;
 			break;
 		case 3:
 			if (Tiley == 3) break;
 			x = Inx*6;
-			o = scale*(input[x+1] - input[x+2] + 8*input[x+3] - 8*input[x+4] + input[x+5]) + bias;
-			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+4)*256 + kz] = o > 0 ? o : 0;
+			// o = scale*(input[x+1] - input[x+2] + 8*input[x+3] - 8*input[x+4] + input[x+5]) + bias;
+			o = (input[x+1] - input[x+2] + 8*input[x+3] - 8*input[x+4] + input[x+5]);
+			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+4)*320 + kz] = o > 0 ? o : 0;
 			break;
 	}
 }
 
 __global__ void kernel_320_OuterProduct_320(float *A, float *B, float *C) {
 	int Tile = blockIdx.x, Part = blockIdx.y, tX = threadIdx.x, tY = threadIdx.y;
-	int c_input = tY*256 + tX, c_kernel = c_input, 
-	   T_offset = (Tile<<12) + (Part<<11) + c_input, 
-	   B_offset = (Tile<<16) + c_kernel;
+	int c_input = tY*320 + tX, c_kernel = c_input, 
+	    // T_offset = (Tile<<11) + (Part<<10) + c_input, 
+		T_offset = Tile*5120 + Part*640 + c_input, // 5120 = 16*320, 640 = 320*2
+	    B_offset = Tile*102400 + c_kernel; // 102400 = 320*320
+
 	
 	extern __shared__ float input[];
-	float *kernel = input + 2048, *out = kernel + 8192;
-	int B_stride[32] = {0, 256, 512, 768, 1024, 1280, 1536, 1792, 2048, 2304, 2560, 2816, 3072, 3328, 3584, 3840, 4096, 4352, 4608, 4864, 5120, 5376, 5632, 5888, 6144, 6400, 6656, 6912, 7168, 7424, 7680, 7936};
+	float *kernel = input + 640, *out = kernel + 6400; //3200 = 320*2*10
+	// int B_stride[32]    = {0, 320, 320, 480, 640, 800, 960, 1120, 1280, 1440, 3200, 1760, 1920, 2080, 2240, 2400, 2560, 2720, 2880, 3040, 3200, 3360, 3520, 3680, 3840, 4000, 4320, 4320, 4480, 4640, 4800, 4960};
+	// int B_stride[20]    = {0, 160, 320, 480, 640, 800, 960, 1120, 1280, 1440, 3200, 1760, 1920, 2080, 2240, 2400, 2560, 2720, 2880, 3040};
+	int B_stride[20] = {0, 320, 640, 960, 1280, 1600, 1920, 2240, 2560, 2880, 3200, 3520, 3840, 4160, 4480, 4800, 5120, 5440, 5760, 6080};
 	out[c_input] = 0.0f;
-	out[c_input+1024] = 0;
 
-	input[c_input] = A[T_offset];
-	input[c_input+1024] = A[T_offset+1024];
-
-	for (int k = 0; k < 8; k++) {
-		int B_start = B_offset + (k<<13); // 32*64
-		kernel[c_kernel] = B[B_start], kernel[c_kernel+1024] = B[B_start+1024];
-		kernel[c_kernel+2048] = B[B_start+2048], kernel[c_kernel+3072] = B[B_start+3072];
-		kernel[c_kernel+4096] = B[B_start+4096], kernel[c_kernel+5120] = B[B_start+5120];
-		kernel[c_kernel+6144] = B[B_start+6144], kernel[c_kernel+7168] = B[B_start+7168];
-
+	input[c_input] = A[T_offset]; // 36*8 blocks, each block loads 320*2 values with 320*2 threads (1 value/t) 
+    // we need to compute 320 products and sum them up. 
+	// the loop below iterates 16 times and each step computes 20 products and accumulates 
+	// the partial sum in shared memory
+	// each thread block will process 320*320 kernel values
+	// 36 blocks in each row (16 rows in total) will use the same 320*320 kernel values
+	for (int k = 0; k < 16; k++) {
+		int B_start = B_offset + k*6400; // 320*20 = 6400 
+		// each thread loads 10 kernel values
+		// the whole thread block can load 320*2*10 = 6400 values
+		// incrementing k by 1 will shift by 6400 = 320*20 values 
+		kernel[c_kernel] = B[B_start]; 
+		kernel[c_kernel+640] = B[B_start+640];
+		kernel[c_kernel+1280] = B[B_start+1280]; 
+		kernel[c_kernel+1920] = B[B_start+1920];
+		kernel[c_kernel+2560] = B[B_start+2560];		
+		kernel[c_kernel+3200] = B[B_start+3200];
+		kernel[c_kernel+3840] = B[B_start+3840];
+		kernel[c_kernel+4480] = B[B_start+4480];
+		kernel[c_kernel+5120] = B[B_start+5120];
+		kernel[c_kernel+5760] = B[B_start+5760];
 		__syncthreads();
 
-		float sum = 0, sum1 = 0;
-		int y_tmp = (tY<<8)+(k<<5), y_tmp1 = y_tmp+1024;
-		for (int j = 0; j < 32; j++) {
+        // after sync, all 20 kernel values are ready to be used? How?
+		// 6400 / 320 = 20, each thread gets 20 values to use
+		// the threads with the same tY share the same 20 values, but how?   
+		float sum = 0;
+		// int y_tmp = (tY<<7)+(k<<5);
+		int y_tmp = tY*320 + k*20;
+		for (int j = 0; j < 20; j++) {
 			sum += input[y_tmp + j] * kernel[tX + B_stride[j]];
-			sum1 += input[y_tmp1 + j] * kernel[tX + B_stride[j]];
 		}
-		out[c_input] += sum;
-		out[c_input+1024] += sum1;
+		out[tY*320 + tX] += sum;
 		__syncthreads();
 	}
 
 	C[T_offset] = out[c_input];
-	C[T_offset+1024] = out[c_input+1024];
+	
 }
 
 int kernel_320() {
 	float *input_ = get_parameter(inputName320, 16*16*320);
 	float *bias = get_parameter(biasName320, 320);
+	float *W = get_parameter(weight_NCHW_Name320, 3*3*320*320);
 	float *input, *output, *l_weights, *l_bias;
 	uint64_t nT1 = 0, nT2 = 0, nT1_cudnn = 0, nT2_cudnn = 0;
 	cudaError_t s;
@@ -234,17 +255,18 @@ int kernel_320() {
 
 	/////////////////////////////////
 	float *kernel = get_parameter(weight_winograd_Name320, 36*320*320), *t_input, *ip;
-	int nInput = 16*16*320, nOutput = 16*16*320, nWeights = 36*320*320, nBias = 320, nTransInput = 16*6*6*320, nInnerProd = 16*6*6*320;
+	int nInput = 16*16*320, nOutput = 16*16*320, nWeights = 36*320*320, nBias = 320, 
+	    nTransInput = 16*6*6*320, nInnerProd = 16*6*6*320;
 	float *l_bnBias, *l_bnScale, *bnBias, *bnScale;
 
-	cudaMalloc((void **) &input, nInput<<3);
+	cudaMalloc((void **) &input, nInput<<2);
 	cudaMalloc((void **) &output, nOutput<<2);
 	cudaMalloc((void **) &l_weights, nWeights<<2);
 	cudaMalloc((void **) &l_bias, nBias<<2);
 	cudaMalloc((void **) &t_input, nTransInput<<2);
 	cudaMalloc((void **) &ip, nInnerProd<<2);
 
-	cudaMemset((void *) input, 0, nInput<<3);
+	cudaMemset((void *) input, 0, nInput<<2);
 	cudaMemset((void *) output, 0, nOutput<<2);
 	cudaMemset((void *) t_input, 0, nTransInput<<2);
 	cudaMemset((void *) l_weights, 0, nWeights<<2);
@@ -261,14 +283,19 @@ int kernel_320() {
 	cudaMemcpy(l_bnBias, bnBias, nBias<<2, cudaMemcpyHostToDevice);
 	cudaMemcpy(l_bnScale, bnScale, nBias<<2, cudaMemcpyHostToDevice);
 
-	float tmp[nOutput];
+	float *tmp = (float*)malloc(nOutput*4);
 
 	nT1 = getTimeMicroseconds64();
 
-	kernel_320_winograd_BtdB <<<dim3(4, 4, 2), dim3(128, 6), (6*6*128)<<2 >>> (input, t_input);
-	kernel_320_OuterProduct_320<<<dim3(36, 2), dim3(320, 4), (8*320 + 32*320 + 8*320)<<2 >>> (t_input, l_weights, ip);
+	kernel_320_winograd_BtdB <<<dim3(4, 4, 2), dim3(160, 6), (6*6*160)<<2 >>> (input, t_input);
+	printf("transform input done \n");
+	cudaCheckError();
+	kernel_320_OuterProduct_320<<<dim3(36, 8), dim3(320, 2), (2*320 + 10*2*320 + 2*320)<<2 >>> (t_input, l_weights, ip);
+	printf("out prod done \n");
+	cudaCheckError();
 	kernel_320_winograd_AtIA <<<dim3(4, 4, 320), dim3(6, 6), ((6*6)<<2)>>> (ip, l_bnBias, l_bnScale, output);
-	//cudaCheckError();
+	printf("transform output done \n");
+	cudaCheckError();
 	cudaDeviceSynchronize();
 	
 	nT2 = getTimeMicroseconds64();
@@ -287,11 +314,23 @@ int kernel_320() {
 	free(kernel);
 	free(bnScale);
 	free(bnBias);
+	
 
+	float *conv_cpu =  (float*)malloc(14*14*320*4);
 
+    nT1_cudnn = getTimeMicroseconds64();
+	compute_cpu(input_, W, conv_cpu, 16, 320, 1);
+    nT2_cudnn = getTimeMicroseconds64();
+	printf("TotalTime = %d us\n", nT2_cudnn-nT1_cudnn);  
+	
+	free(input_);
+	free(W);
 
 
 //	output_checker(tmp, tmp_cudnn, 14, 320, 1);
+	output_checker(tmp, conv_cpu, 14, 320, 1);
+	free(conv_cpu);
+	free(tmp);
 
 	return ((nT2-nT1) << 16);
 }

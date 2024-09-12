@@ -195,20 +195,19 @@ __global__ void kernel_160_OuterProduct_160(float *A, float *B, float *C) {
 	
 	extern __shared__ float input[];
 	float *kernel = input + 640, *out = kernel + 3200; //3200 = 160*4*5
-	// int B_stride[32] = {0, 128, 256, 384, 512, 640, 768, 896, 1024, 1152, 1280, 1408, 1536, 1664, 1792, 1920, 2048, 2176, 2304, 2432, 2560, 2688, 2816, 2944, 3072, 3200, 3328, 3456, 3584, 3712, 3840, 3968};//, 4096, 4224, 4352, 4480, 4608, 4736, 4864, 4992, 5120, 5248, 5376, 5504, 5632, 5760, 5888, 6016, 6144, 6272, 6400, 6528, 6656, 6784, 6912, 7040, 7168, 7296, 7424, 7552, 7680, 7808, 7936, 8064};
 	// int B_stride[32]    = {0, 160, 320, 480, 640, 800, 960, 1120, 1280, 1440, 1600, 1760, 1920, 2080, 2240, 2400, 2560, 2720, 2880, 3040, 3200, 3360, 3520, 3680, 3840, 4000, 4160, 4320, 4480, 4640, 4800, 4960};
 	int B_stride[20]    = {0, 160, 320, 480, 640, 800, 960, 1120, 1280, 1440, 1600, 1760, 1920, 2080, 2240, 2400, 2560, 2720, 2880, 3040};
 	out[c_input] = 0.0f;
 
-	input[c_input] = A[T_offset]; // 36*4 blocks, each block loads 160*6 values with 160*6 threads (1 value/t) 
+	input[c_input] = A[T_offset]; // 36*4 blocks, each block loads 160*4 values with 160*4 threads (1 value/t) 
     // we need to compute 160 products and sum them up. 
 	// the loop below iterates 8 times and each step computes 20 products and accumulates 
 	// the partial sum in shared memory
 	// each thread block will process 160*160 kernel values
 	// 36 blocks in each row (4 rows in total) will use the same 160*160 kernel values
 	for (int k = 0; k < 8; k++) {
-		int B_start = B_offset + k*3200; //
-		// each thread loads 4 kernel values
+		int B_start = B_offset + k*3200; // 160*20
+		// each thread loads 5 kernel values
 		// the whole thread block can load 160*4*5 = 160*20 = 3200 values
 		// incrementing k by 1 will shift by  3200 = 160*20 values 
 		kernel[c_kernel] = B[B_start]; 

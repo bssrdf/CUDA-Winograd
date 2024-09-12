@@ -9,6 +9,7 @@
 #include "Kernel256_one.h"
 #include "Kernel256_winograd.h"
 #include "Kernel160_winograd.h"
+#include "Kernel320_winograd.h"
 #include "util.h"
 
 int main(int argc, char** argv) {
@@ -45,6 +46,10 @@ int main(int argc, char** argv) {
       case 6:
         res = kernel_160();
         break;
+      case 7:
+        res = kernel_320();
+        break; 
+
     }
     if (i > 1) {
       sum += res >> 16;
