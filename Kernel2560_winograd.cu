@@ -33,6 +33,8 @@ __global__ void kernel_2560_winograd_BtdB(float *pInputs, float *pOutputs) {
 
 	int stride_960[6] = {0, 960, 1920, 2880, 3840, 4800}; // 960 = 6*160
 	for (int i = 0; i < 6; i++) {
+		// if(blockIdx.x == 3 && blockIdx.y == 0 && Part == 0 && Inz == 0 && Iny1 == 0)
+		//    printf("%d: %d, %d \n", i, c_input + stride_960[i], c_glb_start + i*stride_r);
 		input[c_input + stride_960[i]] = pInputs[c_glb_start + i*stride_r];
 	}
 	__syncthreads();
@@ -150,7 +152,8 @@ __global__ void kernel_2560_winograd_AtIA(float *pInputs, float *pBiases, float 
 	input[c_input] = tmp;
 	__syncthreads();
 
-	if (Inx > 3 || (Tilex == 3 && Inx > 1)) return;
+	// if (Inx > 3 || (Tilex == 3 && Inx > 1)) return;
+	if (Inx > 3) return;
 	
 	int x;
 	float o;
@@ -168,14 +171,14 @@ __global__ void kernel_2560_winograd_AtIA(float *pInputs, float *pBiases, float 
 			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+2)*2560 + kz] = o > 0 ? o : 0;
 			break;
 		case 2:
-			if (Tiley == 3) break;
+			// if (Tiley == 3) break;
 			x = Inx*6;
 			// o = scale*(input[x+1] + input[x+2] + 4*input[x+3] + 4*input[x+4]) + bias;
 			o = (input[x+1] + input[x+2] + 4*input[x+3] + 4*input[x+4]);
 			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+3)*2560 + kz] = o > 0 ? o : 0;
 			break;
 		case 3:
-			if (Tiley == 3) break;
+			// if (Tiley == 3) break;
 			x = Inx*6;
 			// o = scale*(input[x+1] - input[x+2] + 8*input[x+3] - 8*input[x+4] + input[x+5]) + bias;
 			o = (input[x+1] - input[x+2] + 8*input[x+3] - 8*input[x+4] + input[x+5]);
@@ -186,48 +189,61 @@ __global__ void kernel_2560_winograd_AtIA(float *pInputs, float *pBiases, float 
 
 __global__ void kernel_2560_OuterProduct_2560(float *A, float *B, float *C) {
 	int Tile = blockIdx.x, Part = blockIdx.y, tX = threadIdx.x, tY = threadIdx.y;
-	int c_input = tY*2560 + tX, 
+	u_int64_t c_input = tY*2560 + tX, 
 	    c_kernel = tY*512 + tX,  
 		T_offset = Tile*40960 + Part*2560*2 + c_input, // 40960 = 16*2560, 1024 = 512*2
-	    B_offset = Tile*6553600 + c_kernel; // 6553600 = 2560*2560
+	    B_offset = Tile*6553600 + c_input; // 6553600 = 2560*2560
     
 	extern __shared__ float input[];
 	int B_stride[32] = {0, 512, 1024, 1536, 2048, 2560, 3072, 3584, 4096, 4608, 5120, 5632, 6144, 6656, 7168, 7680, 8192, 8704, 9216, 9728, 10240, 10752, 11264, 11776, 12288, 12800, 13312, 13824, 14336, 14848, 15360, 15872};
 
     // we need to compute 2560 products and sum them up. 
 	// the loop below iterates 5 times and each step computes 512 products and accumulates 
+
+	for (int l = 0; l < 5; l++){		
+		u_int64_t B_start_l = B_offset + l*512;
+		u_int64_t C_offset = T_offset + l*512;
 	for (int i = 0; i < 5; i++){		
 		float *kernel = input + 1024, *out = kernel + 16384; // 10240 = 512*2*16	
 		out[c_kernel] = 0.0f;
-        int offset = T_offset + i<<9; // *512
+        u_int64_t offset = T_offset + (i<<9); // *512
+		// if(tX == 0 && tY == 0 && Tile == 0 && Part == 0){
+		// 	printf("%d, %d, %ld \n", l, i, offset);
+		// }
 		input[c_kernel] = A[offset]; // 36*8 blocks, each block loads 512*2 values with 512*2 threads (1 value/t) 
 		
-		// the loop below iterates  times and each step computes 20 products and accumulates 
+		// the loop below iterates  times and each step computes 32 products and accumulates 
 		// the partial sum in shared memory
 		// each thread block will process 2560*2560 kernel values
 		// 36 blocks in each row (8 rows in total) will use the same 2560*2560 kernel values
+		u_int64_t B_start_i = B_start_l + i*512*2560;
 		for (int k = 0; k < 16; k++) {
-			// int B_start = B_offset + i*512*2560 + k*2560*32; // 2560*20 = 6400 
-			int B_start = B_offset + (i<<9 + k<<5)*2560 ; // 2560*20 = 6400 
+			u_int64_t B_start = B_start_i + k*32*2560 ; // 2560*20 = 6400 
 			// each thread loads 16 kernel values
 			// the whole thread block can load 512*2*16 = 16384 values
 			// incrementing k by 1 will shift by 16384 = 512*2*16 values 
-			kernel[c_kernel] = B[B_start]; 
-			kernel[c_kernel+1024] = B[B_start+1024];
-			kernel[c_kernel+2048] = B[B_start+2048]; 
-			kernel[c_kernel+3072] = B[B_start+3072];
-			kernel[c_kernel+4096] = B[B_start+4096];		
-			kernel[c_kernel+5120] = B[B_start+5120];
-			kernel[c_kernel+6144] = B[B_start+6144];
-			kernel[c_kernel+7168] = B[B_start+7168];
-			kernel[c_kernel+8192] = B[B_start+8192];
-			kernel[c_kernel+9216] = B[B_start+9216];
-			kernel[c_kernel+10240] = B[B_start+10240];
-			kernel[c_kernel+11264] = B[B_start+11264];
-			kernel[c_kernel+12288] = B[B_start+12288];
-			kernel[c_kernel+13312] = B[B_start+13312];
-			kernel[c_kernel+14336] = B[B_start+14336];
-			kernel[c_kernel+15360] = B[B_start+15360];
+
+			// if we have 2 threads in y direction, the two with the same tY 
+			// alternating get two lines of portion of 2560 weights
+			// because the layout of weights has out_dim as the first (fast) dimension,
+			// to get weights along in_dim, we have to iterating over rows		
+			kernel[c_kernel] = B[B_start]; 			
+			kernel[c_kernel+1024] = B[B_start+5120]; // 5120 = 2560*2
+			kernel[c_kernel+2048] = B[B_start+10240];
+			kernel[c_kernel+3072] = B[B_start+15360];
+			kernel[c_kernel+4096] = B[B_start+20480];
+			kernel[c_kernel+5120] = B[B_start+25600];
+			kernel[c_kernel+6144] = B[B_start+30720];
+			kernel[c_kernel+7168] = B[B_start+35840];
+			kernel[c_kernel+8192] = B[B_start+40960];
+			kernel[c_kernel+9216] = B[B_start+46080];
+			kernel[c_kernel+10240] = B[B_start+51200];
+			kernel[c_kernel+11264] = B[B_start+56320];
+			kernel[c_kernel+12288] = B[B_start+61440];
+			kernel[c_kernel+13312] = B[B_start+66560];
+			kernel[c_kernel+14336] = B[B_start+71680];
+			kernel[c_kernel+15360] = B[B_start+76800];
+
 			__syncthreads();
 
 			// after sync, all 32 kernel values are ready to be used? How?
@@ -235,15 +251,21 @@ __global__ void kernel_2560_OuterProduct_2560(float *A, float *B, float *C) {
 			// the threads with the same tY share the same 32 values, but how?   
 			float sum = 0;
 			// int y_tmp = (tY<<7)+(k<<5);
-			int y_tmp = tY*512 + k<<5; //*32
+			int y_tmp = tY*512 + (k<<5); //*32
 			for (int j = 0; j < 32; j++) {
 				sum += input[y_tmp + j] * kernel[tX + B_stride[j]];
 			}
-			out[tY*512 + tX] += sum;
+			out[c_kernel] += sum;
 			__syncthreads();
 		}
         // assumes C[T_offset] is initialized with 0.f    
-		C[T_offset] += out[c_kernel];
+		
+		C[C_offset] += out[c_kernel];
+		// if(tX == 0 && tY == 1 && Tile == 0 && Part == 0){
+		// 	printf("%d, %d, %ld, %f, %f \n", l, i, C_offset, C[C_offset],  out[c_kernel]);
+		// }
+		
+	}
 	}
 	
 }
@@ -301,21 +323,21 @@ int kernel_2560() {
 	nT1 = getTimeMicroseconds64();
 
 	kernel_2560_winograd_BtdB <<<dim3(4, 4, 16), dim3(160, 6), (6*6*160)<<2 >>> (input, t_input);
-	cudaCheckError();
+	// cudaCheckError();
 	int maxbytes = 98304; // 96 KB
     cudaFuncSetAttribute(kernel_2560_OuterProduct_2560, cudaFuncAttributeMaxDynamicSharedMemorySize, maxbytes);
 	kernel_2560_OuterProduct_2560<<<dim3(36, 8), dim3(512, 2), (2*512 + 16*2*512 + 2*512)<<2 >>> (t_input, l_weights, ip);
-	cudaCheckError();
+	// cudaCheckError();
 	kernel_2560_winograd_AtIA <<<dim3(4, 4, 2560), dim3(6, 6), ((6*6)<<2)>>> (ip, l_bnBias, l_bnScale, output);
-	cudaCheckError();
+	// cudaCheckError();
 	cudaDeviceSynchronize();
 
 	nT2 = getTimeMicroseconds64();
 	printf("TotalTime = %d us\n", nT2-nT1); 
 
 	s = cudaMemcpy(tmp, output, nOutput<<2, cudaMemcpyDeviceToHost);
-	printf("%s\n", cudaGetErrorName(s));
-	//cudaCheckError();
+	// printf("A. %s\n", cudaGetErrorName(s));
+	cudaCheckError();
 
 	cudaFree(t_input);
 	cudaFree(output);
@@ -333,19 +355,19 @@ int kernel_2560() {
 	free(bias);
 	
 
-	float *conv_cpu =  (float*)malloc(14*14*2560*4);
+	// float *conv_cpu =  (float*)malloc(14*14*2560*4);
 
-    nT1_cudnn = getTimeMicroseconds64();
-	compute_cpu(input_, W, conv_cpu, 16, 2560, 1);
-    nT2_cudnn = getTimeMicroseconds64();
-	printf("TotalTime = %d us\n", nT2_cudnn-nT1_cudnn);  
+    // nT1_cudnn = getTimeMicroseconds64();
+	// compute_cpu(input_, W, conv_cpu, 16, 2560, 1);
+    // nT2_cudnn = getTimeMicroseconds64();
+	// printf("TotalTime = %d us\n", nT2_cudnn-nT1_cudnn);  
 	
 	free(input_);
 	free(W);
 
 
-	output_checker(tmp, conv_cpu, 14, 2560, 1);
-	free(conv_cpu);
+	// output_checker(tmp, conv_cpu, 14, 2560, 1);
+	// free(conv_cpu);
 	free(tmp);
 
 	return ((nT2-nT1) << 16);

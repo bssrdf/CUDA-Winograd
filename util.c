@@ -55,11 +55,25 @@ float output_checker(float* A, float* B, int len, int channel, int shift) {
             A[((i + shift) * (len + 2 * shift) + j + shift) * channel + k] -
             B[(i * len + j) * channel + k]);
         // if (k == 0)
-        //    printf(" i, j, wi, cpu:  %d, %d, %f, %f \n", i, j, 
+        // if(i == 4 && j == 0)
+          //  printf(" i, j, k, wi, cpu:  %d, %d, %d, %f, %f \n", i, j, k,
+          //       A[((i + shift) * (len + 2 * shift) + j + shift) * channel + k],
+          //         B[(i * len + j) * channel + k]);
+        if (diff > 1e-5){
+          error_cnt++;           
+        }
+        // if (diff > 1.e-4){
+        //    printf(" i, j, k, wi, cpu:  %d, %d, %d, %f, %f \n", i, j, k,
         //         A[((i + shift) * (len + 2 * shift) + j + shift) * channel + k],
         //           B[(i * len + j) * channel + k]);
-        if (diff > 1e-5)
-          error_cnt++;
+        //    return 0.f;
+        // }
+
+        // else{
+        //       printf(" i, j, wi, cpu:  %d, %d, %d, %f, %f \n", i, j, k,
+        //         A[((i + shift) * (len + 2 * shift) + j + shift) * channel + k],
+        //           B[(i * len + j) * channel + k]);
+        // }        
         if (diff > max_error){
           max_error = diff;
           r_win = A[((i + shift) * (len + 2 * shift) + j + shift) * channel + k];

@@ -33,6 +33,8 @@ __global__ void kernel_320_winograd_BtdB(float *pInputs, float *pOutputs) {
 
 	int stride_960[6] = {0, 960, 1920, 2880, 3840, 4800}; // 960 = 6*160
 	for (int i = 0; i < 6; i++) {
+		// if(blockIdx.x == 3 && blockIdx.y == 0 && Part == 0 && Inz == 0 && Iny1 == 0)
+		//    printf("%d: %d, %d \n", i, c_input + stride_960[i], c_glb_start + i*stride_r);
 		input[c_input + stride_960[i]] = pInputs[c_glb_start + i*stride_r];
 	}
 	__syncthreads();
@@ -150,7 +152,8 @@ __global__ void kernel_320_winograd_AtIA(float *pInputs, float *pBiases, float *
 	input[c_input] = tmp;
 	__syncthreads();
 
-	if (Inx > 3 || (Tilex == 3 && Inx > 1)) return;
+	// if (Inx > 3 || (Tilex == 3 && Inx > 1)) return;
+	if (Inx > 3) return;
 	
 	int x;
 	float o;
@@ -168,14 +171,14 @@ __global__ void kernel_320_winograd_AtIA(float *pInputs, float *pBiases, float *
 			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+2)*320 + kz] = o > 0 ? o : 0;
 			break;
 		case 2:
-			if (Tiley == 3) break;
+			// if (Tiley == 3) break;
 			x = Inx*6;
 			// o = scale*(input[x+1] + input[x+2] + 4*input[x+3] + 4*input[x+4]) + bias;
 			o = (input[x+1] + input[x+2] + 4*input[x+3] + 4*input[x+4]);
 			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+3)*320 + kz] = o > 0 ? o : 0;
 			break;
 		case 3:
-			if (Tiley == 3) break;
+			// if (Tiley == 3) break;
 			x = Inx*6;
 			// o = scale*(input[x+1] - input[x+2] + 8*input[x+3] - 8*input[x+4] + input[x+5]) + bias;
 			o = (input[x+1] - input[x+2] + 8*input[x+3] - 8*input[x+4] + input[x+5]);
@@ -318,20 +321,20 @@ int kernel_320() {
 	free(bias);
 	
 
-	// float *conv_cpu =  (float*)malloc(14*14*320*4);
+	float *conv_cpu =  (float*)malloc(14*14*320*4);
 
-    // nT1_cudnn = getTimeMicroseconds64();
-	// compute_cpu(input_, W, conv_cpu, 16, 320, 1);
-    // nT2_cudnn = getTimeMicroseconds64();
-	// printf("TotalTime = %d us\n", nT2_cudnn-nT1_cudnn);  
+    nT1_cudnn = getTimeMicroseconds64();
+	compute_cpu(input_, W, conv_cpu, 16, 320, 1);
+    nT2_cudnn = getTimeMicroseconds64();
+	printf("TotalTime = %d us\n", nT2_cudnn-nT1_cudnn);  
 	
 	free(input_);
 	free(W);
 
 
 //	output_checker(tmp, tmp_cudnn, 14, 320, 1);
-	// output_checker(tmp, conv_cpu, 14, 320, 1);
-	// free(conv_cpu);
+	output_checker(tmp, conv_cpu, 14, 320, 1);
+	free(conv_cpu);
 	free(tmp);
 
 	return ((nT2-nT1) << 16);
