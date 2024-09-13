@@ -227,6 +227,7 @@ __global__ void kernel_256_OuterProduct_256(float *A, float *B, float *C) {
 int kernel_256() {
 	float *input_ = get_parameter(inputName256, 16*16*256);
 	float *bias = get_parameter(biasName256, 256);
+	float *W = get_parameter(weight_NCHW_Name256, 3*3*256*256);
 	float *input, *output, *l_weights, *l_bias;
 	uint64_t nT1 = 0, nT2 = 0, nT1_cudnn = 0, nT2_cudnn = 0;
 	cudaError_t s;
@@ -266,7 +267,8 @@ int kernel_256() {
 	cudaMemcpy(l_bnBias, bnBias, nBias<<2, cudaMemcpyHostToDevice);
 	cudaMemcpy(l_bnScale, bnScale, nBias<<2, cudaMemcpyHostToDevice);
 
-	float tmp[nOutput];
+    float *tmp = (float*)malloc(nOutput*4);
+
 
 	nT1 = getTimeMicroseconds64();
 
@@ -294,9 +296,20 @@ int kernel_256() {
 	free(bnBias);
 
 
+    float *conv_cpu =  (float*)malloc(14*14*256*4);
 
+    nT1_cudnn = getTimeMicroseconds64();
+	compute_cpu(input_, W, conv_cpu, 16, 256, 256, 1);
+    nT2_cudnn = getTimeMicroseconds64();
+	printf("TotalTime = %d us\n", nT2_cudnn-nT1_cudnn);  
+	
+	free(input_);
+	free(W);
 
 //	output_checker(tmp, tmp_cudnn, 14, 256, 1);
+	output_checker(tmp, conv_cpu, 14, 256, 1);
+	free(conv_cpu);
+	free(tmp);
 
 	return ((nT2-nT1) << 16);
 }
