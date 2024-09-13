@@ -186,53 +186,65 @@ __global__ void kernel_2560_winograd_AtIA(float *pInputs, float *pBiases, float 
 
 __global__ void kernel_2560_OuterProduct_2560(float *A, float *B, float *C) {
 	int Tile = blockIdx.x, Part = blockIdx.y, tX = threadIdx.x, tY = threadIdx.y;
-	int c_input = tY*320 + tX, c_kernel = c_input, 
-		T_offset = Tile*5120 + Part*1024 + c_input, // 5120 = 16*2560, 1024 = 512*2
-	    B_offset = Tile*102400 + c_kernel; // 102400 = 2560*2560
-
-	
+	int c_input = tY*2560 + tX, 
+	    c_kernel = tY*512 + tX,  
+		T_offset = Tile*40960 + Part*2560*2 + c_input, // 40960 = 16*2560, 1024 = 512*2
+	    B_offset = Tile*6553600 + c_kernel; // 6553600 = 2560*2560
+    
 	extern __shared__ float input[];
-	float *kernel = input + 640, *out = kernel + 6400; //25600 = 2560*2*10
-	int B_stride[20] = {0, 2560, 640, 960, 1280, 1600, 1920, 2240, 2560, 2880, 25600, 3520, 3840, 4160, 4480, 4800, 5120, 5440, 5760, 6080};
-	out[c_input] = 0.0f;
+	int B_stride[32] = {0, 512, 1024, 1536, 2048, 2560, 3072, 3584, 4096, 4608, 5120, 5632, 6144, 6656, 7168, 7680, 8192, 8704, 9216, 9728, 10240, 10752, 11264, 11776, 12288, 12800, 13312, 13824, 14336, 14848, 15360, 15872};
 
-	input[c_input] = A[T_offset]; // 36*8 blocks, each block loads 2560*2 values with 2560*2 threads (1 value/t) 
     // we need to compute 2560 products and sum them up. 
-	// the loop below iterates 16 times and each step computes 20 products and accumulates 
-	// the partial sum in shared memory
-	// each thread block will process 2560*2560 kernel values
-	// 36 blocks in each row (16 rows in total) will use the same 2560*2560 kernel values
-	for (int k = 0; k < 16; k++) {
-		int B_start = B_offset + k*6400; // 2560*20 = 6400 
-		// each thread loads 10 kernel values
-		// the whole thread block can load 2560*2*10 = 6400 values
-		// incrementing k by 1 will shift by 6400 = 2560*20 values 
-		kernel[c_kernel] = B[B_start]; 
-		kernel[c_kernel+640] = B[B_start+640];
-		kernel[c_kernel+1280] = B[B_start+1280]; 
-		kernel[c_kernel+1920] = B[B_start+1920];
-		kernel[c_kernel+2560] = B[B_start+2560];		
-		// kernel[c_kernel+25600] = B[B_start+25600];
-		kernel[c_kernel+3840] = B[B_start+3840];
-		kernel[c_kernel+4480] = B[B_start+4480];
-		kernel[c_kernel+5120] = B[B_start+5120];
-		kernel[c_kernel+5760] = B[B_start+5760];
-		__syncthreads();
+	// the loop below iterates 5 times and each step computes 512 products and accumulates 
+	for (int i = 0; i < 5; i++){		
+		float *kernel = input + 1024, *out = kernel + 16384; // 10240 = 512*2*16	
+		out[c_kernel] = 0.0f;
+        int offset = T_offset + i<<9; // *512
+		input[c_kernel] = A[offset]; // 36*8 blocks, each block loads 512*2 values with 512*2 threads (1 value/t) 
+		
+		// the loop below iterates  times and each step computes 20 products and accumulates 
+		// the partial sum in shared memory
+		// each thread block will process 2560*2560 kernel values
+		// 36 blocks in each row (8 rows in total) will use the same 2560*2560 kernel values
+		for (int k = 0; k < 16; k++) {
+			// int B_start = B_offset + i*512*2560 + k*2560*32; // 2560*20 = 6400 
+			int B_start = B_offset + (i<<9 + k<<5)*2560 ; // 2560*20 = 6400 
+			// each thread loads 16 kernel values
+			// the whole thread block can load 512*2*16 = 16384 values
+			// incrementing k by 1 will shift by 16384 = 512*2*16 values 
+			kernel[c_kernel] = B[B_start]; 
+			kernel[c_kernel+1024] = B[B_start+1024];
+			kernel[c_kernel+2048] = B[B_start+2048]; 
+			kernel[c_kernel+3072] = B[B_start+3072];
+			kernel[c_kernel+4096] = B[B_start+4096];		
+			kernel[c_kernel+5120] = B[B_start+5120];
+			kernel[c_kernel+6144] = B[B_start+6144];
+			kernel[c_kernel+7168] = B[B_start+7168];
+			kernel[c_kernel+8192] = B[B_start+8192];
+			kernel[c_kernel+9216] = B[B_start+9216];
+			kernel[c_kernel+10240] = B[B_start+10240];
+			kernel[c_kernel+11264] = B[B_start+11264];
+			kernel[c_kernel+12288] = B[B_start+12288];
+			kernel[c_kernel+13312] = B[B_start+13312];
+			kernel[c_kernel+14336] = B[B_start+14336];
+			kernel[c_kernel+15360] = B[B_start+15360];
+			__syncthreads();
 
-        // after sync, all 20 kernel values are ready to be used? How?
-		// 6400 / 2560 = 20, each thread gets 20 values to use
-		// the threads with the same tY share the same 20 values, but how?   
-		float sum = 0;
-		// int y_tmp = (tY<<7)+(k<<5);
-		int y_tmp = tY*320 + k*20;
-		for (int j = 0; j < 20; j++) {
-			sum += input[y_tmp + j] * kernel[tX + B_stride[j]];
+			// after sync, all 32 kernel values are ready to be used? How?
+			// 16384 / 512 = 32, each thread gets 32 values to use
+			// the threads with the same tY share the same 32 values, but how?   
+			float sum = 0;
+			// int y_tmp = (tY<<7)+(k<<5);
+			int y_tmp = tY*512 + k<<5; //*32
+			for (int j = 0; j < 32; j++) {
+				sum += input[y_tmp + j] * kernel[tX + B_stride[j]];
+			}
+			out[tY*512 + tX] += sum;
+			__syncthreads();
 		}
-		out[tY*320 + tX] += sum;
-		__syncthreads();
+        // assumes C[T_offset] is initialized with 0.f    
+		C[T_offset] += out[c_kernel];
 	}
-
-	C[T_offset] = out[c_input];
 	
 }
 
@@ -290,10 +302,12 @@ int kernel_2560() {
 
 	kernel_2560_winograd_BtdB <<<dim3(4, 4, 16), dim3(160, 6), (6*6*160)<<2 >>> (input, t_input);
 	cudaCheckError();
-	kernel_2560_OuterProduct_2560<<<dim3(36, 8), dim3(512, 2), (2*512 + 10*2*512 + 2*512)<<2 >>> (t_input, l_weights, ip);
+	int maxbytes = 98304; // 96 KB
+    cudaFuncSetAttribute(kernel_2560_OuterProduct_2560, cudaFuncAttributeMaxDynamicSharedMemorySize, maxbytes);
+	kernel_2560_OuterProduct_2560<<<dim3(36, 8), dim3(512, 2), (2*512 + 16*2*512 + 2*512)<<2 >>> (t_input, l_weights, ip);
 	cudaCheckError();
 	kernel_2560_winograd_AtIA <<<dim3(4, 4, 2560), dim3(6, 6), ((6*6)<<2)>>> (ip, l_bnBias, l_bnScale, output);
-	// cudaCheckError();
+	cudaCheckError();
 	cudaDeviceSynchronize();
 
 	nT2 = getTimeMicroseconds64();
