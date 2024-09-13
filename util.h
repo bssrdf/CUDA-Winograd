@@ -23,7 +23,7 @@ float* transpose(float* weight, int h, int w);
 uint64_t getTimeMicroseconds64();
 
 float output_checker(float* A, float* B, int len, int channel, int shift);
-void compute_cpu(float* A, float* W,  float *C, int len, int channel, int shift);
+void compute_cpu(float* A, float* W,  float *C, int len, int in_channel,  int out_che, int shift);
 
 
 #ifdef __cplusplus

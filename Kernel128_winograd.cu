@@ -338,7 +338,7 @@ int kernel_128() {
 	free(bnBias);
 
     nT1_cudnn = getTimeMicroseconds64();
-	compute_cpu(input_, W, conv_cpu, 16, 128, 1);
+	compute_cpu(input_, W, conv_cpu, 16, 128, 128, 1);
     nT2_cudnn = getTimeMicroseconds64();
 	printf("TotalTime = %d us\n", nT2_cudnn-nT1_cudnn);  
     

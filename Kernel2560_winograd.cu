@@ -358,7 +358,7 @@ int kernel_2560() {
 	// float *conv_cpu =  (float*)malloc(14*14*2560*4);
 
     // nT1_cudnn = getTimeMicroseconds64();
-	// compute_cpu(input_, W, conv_cpu, 16, 2560, 1);
+	// compute_cpu(input_, W, conv_cpu, 16, 2560, 2560, 1);
     // nT2_cudnn = getTimeMicroseconds64();
 	// printf("TotalTime = %d us\n", nT2_cudnn-nT1_cudnn);  
 	

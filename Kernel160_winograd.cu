@@ -309,7 +309,7 @@ int kernel_160() {
 	float *conv_cpu =  (float*)malloc(14*14*160*4);
 
     nT1_cudnn = getTimeMicroseconds64();
-	compute_cpu(input_, W, conv_cpu, 16, 160, 1);
+	compute_cpu(input_, W, conv_cpu, 16, 160, 160, 1);
     nT2_cudnn = getTimeMicroseconds64();
 	printf("TotalTime = %d us\n", nT2_cudnn-nT1_cudnn);  
 	

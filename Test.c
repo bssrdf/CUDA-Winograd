@@ -11,10 +11,11 @@
 #include "Kernel160_winograd.h"
 #include "Kernel320_winograd.h"
 #include "Kernel2560_winograd.h"
+#include "Kernel_in2560_out1280_winograd.h"
 #include "util.h"
 
 int main(int argc, char** argv) {
-  int nTest = 20, sum = 0, sum_cudnn = 0, i;
+  int nTest = 1, sum = 0, sum_cudnn = 0, i;
   cudaSetDevice(0);
 
   int mode = 0;
@@ -53,7 +54,10 @@ int main(int argc, char** argv) {
       case 8:
         res = kernel_2560();
         break; 
-
+      case 9:
+        res = kernel_2560_1280();
+        break; 
+  
     }
     if (i > 1) {
       sum += res >> 16;

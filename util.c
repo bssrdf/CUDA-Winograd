@@ -89,16 +89,16 @@ float output_checker(float* A, float* B, int len, int channel, int shift) {
 }
 
 
-void compute_cpu(float* A, float* W,  float *C, int len, int channel, int shift){
+void compute_cpu(float* A, float* W,  float *C, int len, int in_channel, int out_channel, int shift){
     int i, j, k;
-    int stride = len*channel;
+    // int stride = len*channel;
     
       for (j = 1; j < len - 1; j++){
         for (i = 1; i < len - 1; i++){
 
-          for (int l = 0; l < channel; l++){
+          for (int l = 0; l < out_channel; l++){
           float sum = 0.f;
-          for (k = 0; k < channel; k++){
+          for (k = 0; k < in_channel; k++){
             for(int ii=-1; ii < 2; ii++){ 
               for(int jj=-1; jj < 2; jj++){ 
                  int x = i+ii, y = j+jj; 
@@ -106,7 +106,7 @@ void compute_cpu(float* A, float* W,  float *C, int len, int channel, int shift)
                 //  int idx2 = l*channel*channel+k*channel+(ii+1)*3+jj+1;
                 //  printf("%d, %d \n", idx1, idx2);
                 //  sum += A[x+k*len+y*stride]*W[l*channel*3*3+k*3*3+(ii+1)*3+jj+1];
-                 sum += A[k + (x * len + y)*channel]*W[l*channel*3*3+k*3*3+(ii+1)*3+jj+1];
+                 sum += A[k + (x * len + y)*in_channel]*W[l*in_channel*3*3+k*3*3+(ii+1)*3+jj+1];
                 //  if(fabs(sum) > 1.e10)
                 //     printf("wrong: %f, %f \n", A[x+k*len+y*stride],W[l*channel*3*3+k*3*3+(ii+1)*3+jj+1]);
               }
@@ -114,7 +114,7 @@ void compute_cpu(float* A, float* W,  float *C, int len, int channel, int shift)
           }
           // int idx3 = i+l*(len-2)+j*(len-2)*channel;
           // printf("idx3 = %d \n", idx3);
-          C[((i-1) * (len-2) + j-1) * channel + l] = sum > 0? sum : 0.f;    
+          C[((i-1) * (len-2) + j-1) * out_channel + l] = sum > 0? sum : 0.f;    
       }
     }
     }
