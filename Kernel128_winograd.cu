@@ -174,30 +174,30 @@ __global__ void kernel_128_winograd_AtIA(float *pInputs, float *pBiases, float *
 			x = Inx*6;
 			// o = scale*(input[x]+input[x+1]+input[x+2]+input[x+3]+input[x+4])+ bias;
 			o = (input[x]+input[x+1]+input[x+2]+input[x+3]+input[x+4]);
-			if(Tilex == 0 && Tiley == 0 && kz == 0 && Iny == 0 && Inx == 0){
-				printf("idx = %d \n", (((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+1)*128 + kz);
-			} 
-			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+1)*128 + kz] = o > 0 ? o : 0;
+			// if(Tilex == 0 && Tiley == 0 && kz == 0 && Iny == 0 && Inx == 0){
+			// 	printf("idx = %d \n", (((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+1)*128 + kz);
+			// } 
+			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+1)*128 + kz] = o;
 			break;
 		case 1:
 			x = Inx*6;
 			// o = scale*(input[x+1] - input[x+2] + 2*input[x+3] - 2*input[x+4]) + bias;
 			o = (input[x+1] - input[x+2] + 2*input[x+3] - 2*input[x+4]);
-			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+2)*128 + kz] = o > 0 ? o : 0;
+			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+2)*128 + kz] = o;
 			break;
 		case 2:
 			// if (Tiley == 3) break;
 			x = Inx*6;
 			// o = scale*(input[x+1] + input[x+2] + 4*input[x+3] + 4*input[x+4]) + bias;
 			o = (input[x+1] + input[x+2] + 4*input[x+3] + 4*input[x+4]);
-			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+3)*128 + kz] = o > 0 ? o : 0;
+			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+3)*128 + kz] = o;
 			break;
 		case 3:
 			// if (Tiley == 3) break;
 			x = Inx*6;
 			// o = scale*(input[x+1] - input[x+2] + 8*input[x+3] - 8*input[x+4] + input[x+5]) + bias;
 			o = (input[x+1] - input[x+2] + 8*input[x+3] - 8*input[x+4] + input[x+5]);
-			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+4)*128 + kz] = o > 0 ? o : 0;
+			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+4)*128 + kz] = o;
 			break;
 	}
 }

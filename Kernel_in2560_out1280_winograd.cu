@@ -162,27 +162,28 @@ __global__ void kernel_2560_1280_winograd_AtIA(float *pInputs, float *pBiases, f
 			x = Inx*6;
 			// o = scale*(input[x]+input[x+1]+input[x+2]+input[x+3]+input[x+4]) + bias;
 			o = (input[x]+input[x+1]+input[x+2]+input[x+3]+input[x+4]);
-			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+1)*1280 + kz] = o > 0 ? o : 0;
+			// pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+1)*1280 + kz] = o > 0 ? o : 0;
+			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+1)*1280 + kz] = o;
 			break;
 		case 1:
 			x = Inx*6;
 			// o = scale*(input[x+1] - input[x+2] + 2*input[x+3] - 2*input[x+4]) + bias;
 			o = (input[x+1] - input[x+2] + 2*input[x+3] - 2*input[x+4]);
-			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+2)*1280 + kz] = o > 0 ? o : 0;
+			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+2)*1280 + kz] = o;
 			break;
 		case 2:
 			// if (Tiley == 3) break;
 			x = Inx*6;
 			// o = scale*(input[x+1] + input[x+2] + 4*input[x+3] + 4*input[x+4]) + bias;
 			o = (input[x+1] + input[x+2] + 4*input[x+3] + 4*input[x+4]);
-			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+3)*1280 + kz] = o > 0 ? o : 0;
+			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+3)*1280 + kz] = o;
 			break;
 		case 3:
 			// if (Tiley == 3) break;
 			x = Inx*6;
 			// o = scale*(input[x+1] - input[x+2] + 8*input[x+3] - 8*input[x+4] + input[x+5]) + bias;
 			o = (input[x+1] - input[x+2] + 8*input[x+3] - 8*input[x+4] + input[x+5]);
-			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+4)*1280 + kz] = o > 0 ? o : 0;
+			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+4)*1280 + kz] = o;
 			break;
 	}
 }
@@ -335,7 +336,7 @@ int kernel_2560_1280() {
 	printf("TotalTime = %d us\n", nT2-nT1); 
 
 	s = cudaMemcpy(tmp, output, nOutput<<2, cudaMemcpyDeviceToHost);
-	// printf("A. %s\n", cudaGetErrorName(s));
+	printf("A. %s, %f \n", cudaGetErrorName(s), tmp[57183]);
 	cudaCheckError();
 
 	cudaFree(t_input);
@@ -354,19 +355,19 @@ int kernel_2560_1280() {
 	free(bias);
 	
 
-	// float *conv_cpu =  (float*)malloc(14*14*1280*4);
+	float *conv_cpu =  (float*)malloc(14*14*1280*4);
 
-    // nT1_cudnn = getTimeMicroseconds64();
-	// compute_cpu(input_, W, conv_cpu, 16, 2560, 1280, 1);
-    // nT2_cudnn = getTimeMicroseconds64();
-	// printf("TotalTime = %d us\n", nT2_cudnn-nT1_cudnn);  
+    nT1_cudnn = getTimeMicroseconds64();
+	compute_cpu(input_, W, conv_cpu, 16, 2560, 1280, 1);
+    nT2_cudnn = getTimeMicroseconds64();
+	printf("TotalTime = %d us\n", nT2_cudnn-nT1_cudnn);  
 	
 	free(input_);
 	free(W);
 
 
-	// output_checker(tmp, conv_cpu, 14, 1280, 1);
-	// free(conv_cpu);
+	output_checker(tmp, conv_cpu, 14, 1280, 1);
+	free(conv_cpu);
 	free(tmp);
 
 	return ((nT2-nT1) << 16);

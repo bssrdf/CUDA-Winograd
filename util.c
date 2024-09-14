@@ -114,7 +114,7 @@ void compute_cpu(float* A, float* W,  float *C, int len, int in_channel, int out
           }
           // int idx3 = i+l*(len-2)+j*(len-2)*channel;
           // printf("idx3 = %d \n", idx3);
-          C[((i-1) * (len-2) + j-1) * out_channel + l] = sum > 0? sum : 0.f;    
+          C[((i-1) * (len-2) + j-1) * out_channel + l] = sum ; //> 0? sum : 0.f;    
       }
     }
     }
