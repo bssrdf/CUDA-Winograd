@@ -201,70 +201,70 @@ __global__ void kernel_2560_1280_OuterProduct_2560_1280(float *A, float *B, floa
     int B_stride[32] = {0, 256, 512, 768, 1024, 1280, 1536, 1792, 2048, 2304, 2560, 2816, 3072, 3328, 3584, 3840, 4096, 4352, 4608, 4864, 5120, 5376, 5632, 5888, 6144, 6400, 6656, 6912, 7168, 7424, 7680, 7936};
     // we need to compute 2560 products and sum them up. 
 	// the loop below iterates 5 times and each step computes 512 products and accumulates 
+    float *kernel = input + 1024, *out = kernel + 8192; // 8192 = 256*4*8	
 
 	for (int l = 0; l < 5; l++){		
 		u_int64_t B_start_l = B_offset + l*256;
 		u_int64_t C_offset = C_start + l*256;
-	for (int i = 0; i < 10; i++){		
-		float *kernel = input + 1024, *out = kernel + 8192; // 8192 = 256*4*8	
 		out[c_kernel] = 0.0f;
-        u_int64_t offset = T_offset + (i<<8); // *256
-		// if(tX == 0 && tY == 0 && Tile == 0 && Part == 0){
-		// 	printf("%d, %d, %ld \n", l, i, offset);
-		// }
-		input[c_kernel] = A[offset]; // 36*4 blocks, each block loads 256*4 values with 256*4 threads (1 value/t) 
-		
-		// the loop below iterates  times and each step computes 32 products and accumulates 
-		// the partial sum in shared memory
-		// each thread block will process 2560*1280 kernel values
-		// 36 blocks in each row (8 rows in total) will use the same 2560_1280*2560_1280 kernel values
-		u_int64_t B_start_i = B_start_l + i*256*1280;
-		for (int k = 0; k < 8; k++) {
-			u_int64_t B_start = B_start_i + k*32*1280 ; // 
-			// each thread loads 16 kernel values
-			// the whole thread block can load 512*2*16 = 16384 values
-			// incrementing k by 1 will shift by 16384 = 512*2*16 values 
 
-			// if we have 4 threads in y direction, these 4 with the same tY 
-			// alternating get 4 lines of portion of 2560 weights
-			// because the layout of weights has out_dim as the first (fast) dimension,
-			// to get weights along in_dim, we have to iterating over rows		
-			// kernel[c_kernel] = B[B_start], kernel[c_kernel+1024] = B[B_start+1024];
-			// kernel[c_kernel+2048] = B[B_start+2048], kernel[c_kernel+3072] = B[B_start+3072];
-			// kernel[c_kernel+4096] = B[B_start+4096], kernel[c_kernel+5120] = B[B_start+5120];
-			// kernel[c_kernel+6144] = B[B_start+6144], kernel[c_kernel+7168] = B[B_start+7168];
-			kernel[c_kernel] = B[B_start]; 			
-			kernel[c_kernel+1024] = B[B_start+5120]; // 5120 = 1280*4 (out_dim * number of threads in y dir)
-			kernel[c_kernel+2048] = B[B_start+10240];
-			kernel[c_kernel+3072] = B[B_start+15360];
-			kernel[c_kernel+4096] = B[B_start+20480];
-			kernel[c_kernel+5120] = B[B_start+25600];
-			kernel[c_kernel+6144] = B[B_start+30720];
-			kernel[c_kernel+7168] = B[B_start+35840];
-			
-			
-			__syncthreads();
+		for (int i = 0; i < 10; i++){
 
-			// after sync, all 32 kernel values are ready to be used? How?
-			// 16384 / 512 = 32, each thread gets 32 values to use
-			// the threads with the same tY share the same 32 values, but how?   
-			float sum = 0;
-			// int y_tmp = (tY<<7)+(k<<5);
-			int y_tmp = tY*256 + (k<<5); //*32
-			for (int j = 0; j < 32; j++) {
-				sum += input[y_tmp + j] * kernel[tX + B_stride[j]];
+			u_int64_t offset = T_offset + (i<<8); // *256
+			// if(tX == 0 && tY == 0 && Tile == 0 && Part == 0){
+			// 	printf("%d, %d, %ld \n", l, i, offset);
+			// }
+			input[c_kernel] = A[offset]; // 36*4 blocks, each block loads 256*4 values with 256*4 threads (1 value/t) 
+			
+			// the loop below iterates  times and each step computes 32 products and accumulates 
+			// the partial sum in shared memory
+			// each thread block will process 2560*1280 kernel values
+			// 36 blocks in each row (8 rows in total) will use the same 2560_1280*2560_1280 kernel values
+			u_int64_t B_start_i = B_start_l + i*256*1280;
+			for (int k = 0; k < 8; k++) {
+				u_int64_t B_start = B_start_i + k*32*1280 ; // 
+				// each thread loads 16 kernel values
+				// the whole thread block can load 512*2*16 = 16384 values
+				// incrementing k by 1 will shift by 16384 = 512*2*16 values 
+
+				// if we have 4 threads in y direction, these 4 with the same tY 
+				// alternating get 4 lines of portion of 2560 weights
+				// because the layout of weights has out_dim as the first (fast) dimension,
+				// to get weights along in_dim, we have to iterating over rows		
+				// kernel[c_kernel] = B[B_start], kernel[c_kernel+1024] = B[B_start+1024];
+				// kernel[c_kernel+2048] = B[B_start+2048], kernel[c_kernel+3072] = B[B_start+3072];
+				// kernel[c_kernel+4096] = B[B_start+4096], kernel[c_kernel+5120] = B[B_start+5120];
+				// kernel[c_kernel+6144] = B[B_start+6144], kernel[c_kernel+7168] = B[B_start+7168];
+				kernel[c_kernel] = B[B_start];
+				kernel[c_kernel+1024] = B[B_start+5120]; // 5120 = 1280*4 (out_dim * number of threads in y dir)
+				kernel[c_kernel+2048] = B[B_start+10240];
+				kernel[c_kernel+3072] = B[B_start+15360];
+				kernel[c_kernel+4096] = B[B_start+20480];
+				kernel[c_kernel+5120] = B[B_start+25600];
+				kernel[c_kernel+6144] = B[B_start+30720];
+				kernel[c_kernel+7168] = B[B_start+35840];
+
+				__syncthreads();
+
+				// after sync, all 32 kernel values are ready to be used? How?
+				// 16384 / 512 = 32, each thread gets 32 values to use
+				// the threads with the same tY share the same 32 values, but how?   
+				float sum = 0;
+				// int y_tmp = (tY<<7)+(k<<5);
+				int y_tmp = tY*256 + (k<<5); //*32
+				for (int j = 0; j < 32; j++) {
+					sum += input[y_tmp + j] * kernel[tX + B_stride[j]];
+				}
+				out[c_kernel] += sum;
+				__syncthreads();
 			}
-			out[c_kernel] += sum;
-			__syncthreads();
+			// assumes C[T_offset] is initialized with 0.f    
 		}
-        // assumes C[T_offset] is initialized with 0.f    
-		
 		C[C_offset] += out[c_kernel];
 		// if(tX == 0 && tY == 1 && Tile == 0 && Part == 0){
 		// 	printf("%d, %d, %ld, %f, %f \n", l, i, C_offset, C[C_offset],  out[c_kernel]);
 		// }
 		
-	}
 	}
 	
 }
