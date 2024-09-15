@@ -5,6 +5,9 @@
 #include <float.h>
 #include <math.h>
 #include <assert.h>
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include "cudnn.h"
 #include <xmmintrin.h>
 #include <immintrin.h>
 
@@ -224,18 +227,14 @@ __global__ void kernel_2560_1280_OuterProduct_2560_1280(float *A, float *B, floa
 			u_int64_t B_start_i = B_start_l + i*256*1280;
 			for (int k = 0; k < 8; k++) {
 				u_int64_t B_start = B_start_i + k*32*1280 ; // 
-				// each thread loads 16 kernel values
-				// the whole thread block can load 512*2*16 = 16384 values
-				// incrementing k by 1 will shift by 16384 = 512*2*16 values 
+				// each thread loads 8 kernel values
+				// the whole thread block can load 256*4*8 = 16384 values
+				// incrementing k by 1 will shift by 16384 = 256*4*8 values 
 
 				// if we have 4 threads in y direction, these 4 with the same tY 
-				// alternating get 4 lines of portion of 2560 weights
+				// alternating get 4 lines of portion of 1280 weights
 				// because the layout of weights has out_dim as the first (fast) dimension,
 				// to get weights along in_dim, we have to iterating over rows		
-				// kernel[c_kernel] = B[B_start], kernel[c_kernel+1024] = B[B_start+1024];
-				// kernel[c_kernel+2048] = B[B_start+2048], kernel[c_kernel+3072] = B[B_start+3072];
-				// kernel[c_kernel+4096] = B[B_start+4096], kernel[c_kernel+5120] = B[B_start+5120];
-				// kernel[c_kernel+6144] = B[B_start+6144], kernel[c_kernel+7168] = B[B_start+7168];
 				kernel[c_kernel] = B[B_start];
 				kernel[c_kernel+1024] = B[B_start+5120]; // 5120 = 1280*4 (out_dim * number of threads in y dir)
 				kernel[c_kernel+2048] = B[B_start+10240];
@@ -261,7 +260,7 @@ __global__ void kernel_2560_1280_OuterProduct_2560_1280(float *A, float *B, floa
 			}
 			// assumes C[T_offset] is initialized with 0.f    
 		}
-		C[C_offset] += out[c_kernel];
+		C[C_offset] = out[c_kernel];
 		// if(tX == 0 && tY == 1 && Tile == 0 && Part == 0){
 		// 	printf("%d, %d, %ld, %f, %f \n", l, i, C_offset, C[C_offset],  out[c_kernel]);
 		// }
@@ -320,24 +319,189 @@ int kernel_2560_1280() {
 
 	float *tmp = (float*)malloc(nOutput*4);
 
-	nT1 = getTimeMicroseconds64();
+	int iterations = 10;
+    
+    CUevent hStart, hStop;
+	float ms, avg;
+	cudaEventCreate(&hStart, CU_EVENT_BLOCKING_SYNC); // CU_EVENT_DEFAULT
+	cudaEventCreate(&hStop,  CU_EVENT_BLOCKING_SYNC);
 
-	kernel_2560_1280_winograd_BtdB <<<dim3(4, 4, 16), dim3(160, 6), (6*6*160)<<2 >>> (input, t_input);
-	// cudaCheckError();
 	int maxbytes = 98304; // 96 KB
     cudaFuncSetAttribute(kernel_2560_1280_OuterProduct_2560_1280, cudaFuncAttributeMaxDynamicSharedMemorySize, maxbytes);
+    // warm up
+	kernel_2560_1280_winograd_BtdB <<<dim3(4, 4, 16), dim3(160, 6), (6*6*160)<<2 >>> (input, t_input);
 	kernel_2560_1280_OuterProduct_2560_1280<<<dim3(36, 4), dim3(256, 4), (4*256 + 8*4*256 + 4*256)<<2 >>> (t_input, l_weights, ip);
-	// cudaCheckError();
 	kernel_2560_1280_winograd_AtIA <<<dim3(4, 4, 1280), dim3(6, 6), ((6*6)<<2)>>> (ip, l_bnBias, l_bnScale, output);
-	// cudaCheckError();
-	cudaDeviceSynchronize();
+    cudaDeviceSynchronize();
 
-	nT2 = getTimeMicroseconds64();
-	printf("TotalTime = %d us\n", nT2-nT1); 
+    cudaEventRecord( hStart, NULL ) ;
+    for(int iter=0; iter<iterations; iter++){ 
+	kernel_2560_1280_winograd_BtdB <<<dim3(4, 4, 16), dim3(160, 6), (6*6*160)<<2 >>> (input, t_input);
+	kernel_2560_1280_OuterProduct_2560_1280<<<dim3(36, 4), dim3(256, 4), (4*256 + 8*4*256 + 4*256)<<2 >>> (t_input, l_weights, ip);
+	kernel_2560_1280_winograd_AtIA <<<dim3(4, 4, 1280), dim3(6, 6), ((6*6)<<2)>>> (ip, l_bnBias, l_bnScale, output);
+	}
+	// cudaDeviceSynchronize();
+	cudaEventRecord( hStop, NULL );
+    cudaEventSynchronize( hStop ) ;
+    cudaEventElapsedTime( &ms, hStart, hStop ) ;
+    avg = ms / iterations;
+
+	printf("TotalTime = %.1f ms and avg = %.3f ms\n", ms, avg); 
 
 	s = cudaMemcpy(tmp, output, nOutput<<2, cudaMemcpyDeviceToHost);
-	printf("A. %s, %f \n", cudaGetErrorName(s), tmp[57183]);
+	// printf("A. %s, %f \n", cudaGetErrorName(s), tmp[57183]);
 	cudaCheckError();
+
+	cudaFree(t_input);
+	cudaFree(output);
+	cudaFree(l_weights);
+	cudaFree(l_bias);
+	cudaFree(l_bnBias);
+	cudaFree(l_bnScale);
+	cudaFree(ip);
+	// cudaFree(input);
+
+
+	// free(kernel);
+	free(bnScale);
+	free(bnBias);
+	// free(bias);
+	
+
+    bnBias = get_parameter(bnBiasName2560_1280, 2560);
+	bnScale = get_parameter(bnScaleName2560_1280, 2560);
+	float* eMean = get_parameter(eMeanName2560_1280, 2560);
+	float* eVar = get_parameter(eVarName2560_1280, 2560);
+	float *l_eMean, *l_eVar;
+
+    nInput = 16*16*2560, nOutput = 14*14*1280, nWeights = 3*3*2560*1280, nBias = 2560;
+
+	cudaMalloc((void **) &output, nOutput<<2);
+	cudaMalloc((void **) &l_weights, nWeights<<2);
+	cudaMalloc((void **) &l_bias, nBias<<2);
+	// cudaMemcpy(l_weights, kernel, nWeights<<2, cudaMemcpyHostToDevice);
+	cudaMemcpy(l_bias, bias, nBias<<2, cudaMemcpyHostToDevice);
+
+	cudaMalloc((void **) &l_eMean, nBias<<2);
+	cudaMalloc((void **) &l_eVar, nBias<<2);
+	cudaMemcpy(l_bnBias, bnBias, nBias<<2, cudaMemcpyHostToDevice);
+	cudaMemcpy(l_bnScale, bnScale, nBias<<2, cudaMemcpyHostToDevice);
+	cudaMemcpy(l_eMean, eMean, nBias<<2, cudaMemcpyHostToDevice);
+	cudaMemcpy(l_eVar, eVar, nBias<<2, cudaMemcpyHostToDevice);
+
+	cudaMemset((void *) output, 0, nOutput<<2);	
+	
+	
+	cudaMemcpy(l_weights, W, nWeights<<2, cudaMemcpyHostToDevice);
+
+	float tmp_cudnn[nOutput];
+
+	cudnnStatus_t status;
+	float one = 1.0, zero = 0.0;
+	int size;
+
+	cudnnHandle_t handle;
+	status = cudnnCreate(&handle);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed1\n");
+
+	cudnnTensorDescriptor_t xdesc, ydesc, bdesc;
+	cudnnFilterDescriptor_t wdesc; // CUDNN_TENSOR_NHWC, CUDNN_TENSOR_NCHW
+	status = cudnnCreateTensorDescriptor(&xdesc);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed2\n");
+	status = cudnnSetTensor4dDescriptor(xdesc, CUDNN_TENSOR_NHWC, CUDNN_DATA_FLOAT, 1, 2560, 16, 16);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed3\n");
+	status = cudnnCreateTensorDescriptor(&ydesc);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed4\n");
+	status = cudnnSetTensor4dDescriptor(ydesc, CUDNN_TENSOR_NHWC, CUDNN_DATA_FLOAT, 1, 1280, 14, 14);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed5\n");
+	status = cudnnCreateFilterDescriptor(&wdesc);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed6\n");
+	status = cudnnSetFilter4dDescriptor(wdesc, CUDNN_DATA_FLOAT, CUDNN_TENSOR_NCHW, 1280, 2560, 3, 3);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed7\n");
+	status = cudnnCreateTensorDescriptor(&bdesc);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed8\n");
+	status = cudnnSetTensor4dDescriptor(bdesc, CUDNN_TENSOR_NHWC, CUDNN_DATA_FLOAT, 1, 2560, 1, 1);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed9\n");
+	cudnnConvolutionDescriptor_t conv_desc;
+	status = cudnnCreateConvolutionDescriptor(&conv_desc);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed10\n");
+	status = cudnnSetConvolution2dDescriptor(conv_desc, 0,0, 1,1,1,1, CUDNN_CROSS_CORRELATION, CUDNN_DATA_FLOAT); //CUDNN_CONVOLUTION
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed11\n");
+
+	cudnnActivationDescriptor_t act_desc;
+	status = cudnnCreateActivationDescriptor(&act_desc);  
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed12\n");
+	status = cudnnSetActivationDescriptor(act_desc, CUDNN_ACTIVATION_RELU, CUDNN_NOT_PROPAGATE_NAN, 0);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed13\n");
+
+	cudnnTensorDescriptor_t bnScaleBiasMeanVarDesc;
+	status = cudnnCreateTensorDescriptor(&bnScaleBiasMeanVarDesc);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed14\n");
+	status = cudnnSetTensor4dDescriptor(bnScaleBiasMeanVarDesc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, 1, 2560, 1, 1);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed15\n");
+
+	// cudnnConvolutionFwdAlgo_t algo = (cudnnConvolutionFwdAlgo_t)6;
+	// cudnnConvolutionFwdAlgo_t algo = CUDNN_CONVOLUTION_FWD_ALGO_GEMM;
+	cudnnConvolutionFwdAlgo_t algo = CUDNN_CONVOLUTION_FWD_ALGO_WINOGRAD;
+	// cudnnConvolutionFwdAlgo_t algo = CUDNN_CONVOLUTION_FWD_ALGO_WINOGRAD_NONFUSED;
+
+	status = cudnnGetConvolutionForwardWorkspaceSize(handle,
+	   xdesc,
+	   wdesc,
+	   conv_desc,
+	   ydesc,
+	   algo,
+	   (size_t *)&(size));
+
+	float *extra;
+	cudaMalloc((void **) &extra, size);
+
+
+	status = cudnnConvolutionForward(handle, &one,
+			xdesc, input, wdesc, l_weights, 
+			conv_desc, algo, 
+			extra, size, &zero,
+			ydesc, output);
+	if (status != CUDNN_STATUS_SUCCESS) printf("Not Successed1\n");
+	cudaDeviceSynchronize();
+	// nT1_cudnn = getTimeMicroseconds64();
+    cudaEventRecord( hStart, NULL ) ;
+    for(int iter=0; iter<iterations; iter++){  
+		status = cudnnConvolutionForward(handle, &one,
+			xdesc, input, wdesc, l_weights, 
+			conv_desc, algo, 
+			extra, size, &zero,
+			ydesc, output);
+	}
+	cudaEventRecord( hStop, NULL );
+    cudaEventSynchronize( hStop ) ;
+    cudaEventElapsedTime( &ms, hStart, hStop ) ;
+    avg = ms / iterations;
+	printf("TotalTime = %.1f ms and avg = %.3f ms\n", ms, avg); 
+	// if (status != CUDNN_STATUS_SUCCESS) printf("Not Successed1\n");
+
+	// status = cudnnBatchNormalizationForwardInference(handle, CUDNN_BATCHNORM_SPATIAL,
+	// 	&one, &zero, 
+	// 	ydesc, output, ydesc, output,
+	// 	bnScaleBiasMeanVarDesc, l_bnScale, l_bnBias, l_eMean, l_eVar, CUDNN_BN_MIN_EPSILON);
+	// if (status != CUDNN_STATUS_SUCCESS) printf("Not Successed2\n");
+
+	// status = cudnnActivationForward(handle, act_desc, &one,
+	// 	ydesc, output, &zero,
+	// 	ydesc, output);
+	// if (status != CUDNN_STATUS_SUCCESS) printf("Not Successed3\n");
+
+	// cudaDeviceSynchronize();
+	// nT2_cudnn = getTimeMicroseconds64();
+	// printf("cuDNN TotalTime = %d us\n", nT2_cudnn-nT1_cudnn);
+	
+	s = cudaMemcpy(tmp_cudnn, output, nOutput<<2, cudaMemcpyDeviceToHost);
+	printf("%s\n", cudaGetErrorName(s));
+
+
+
+    cudaFree(extra);
+	
 
 	cudaFree(t_input);
 	cudaFree(output);
@@ -353,21 +517,23 @@ int kernel_2560_1280() {
 	free(bnScale);
 	free(bnBias);
 	free(bias);
+
+	
 	
 
-	float *conv_cpu =  (float*)malloc(14*14*1280*4);
+	// float *conv_cpu =  (float*)malloc(14*14*1280*4);
 
-    nT1_cudnn = getTimeMicroseconds64();
-	compute_cpu(input_, W, conv_cpu, 16, 2560, 1280, 1);
-    nT2_cudnn = getTimeMicroseconds64();
-	printf("TotalTime = %d us\n", nT2_cudnn-nT1_cudnn);  
+    // nT1_cudnn = getTimeMicroseconds64();
+	// compute_cpu(input_, W, conv_cpu, 16, 2560, 1280, 1);
+    // nT2_cudnn = getTimeMicroseconds64();
+	// printf("TotalTime = %d us\n", nT2_cudnn-nT1_cudnn);  
 	
 	free(input_);
 	free(W);
 
 
-	output_checker(tmp, conv_cpu, 14, 1280, 1);
-	free(conv_cpu);
+	output_checker(tmp, tmp_cudnn, 14, 1280, 1);
+	// free(conv_cpu);
 	free(tmp);
 
 	return ((nT2-nT1) << 16);

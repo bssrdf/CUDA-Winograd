@@ -7,8 +7,9 @@
 #include <assert.h>
 #include <xmmintrin.h>
 #include <immintrin.h>
-
-//#include "cudnn.h"
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include "cudnn.h"
 #include "util.h"
 #include "Kernel2560_winograd.h"
 
@@ -259,7 +260,7 @@ __global__ void kernel_2560_OuterProduct_2560(float *A, float *B, float *C) {
 			}
 			// assumes C[T_offset] is initialized with 0.f    
 		}
-		C[C_offset] += out[c_kernel];
+		C[C_offset] = out[c_kernel];
 		// if(tX == 0 && tY == 1 && Tile == 0 && Part == 0){
 		// 	printf("%d, %d, %ld, %f, %f \n", l, i, C_offset, C[C_offset],  out[c_kernel]);
 		// }
@@ -317,20 +318,38 @@ int kernel_2560() {
 
 	float *tmp = (float*)malloc(nOutput*4);
 
-	nT1 = getTimeMicroseconds64();
-
-	kernel_2560_winograd_BtdB <<<dim3(4, 4, 16), dim3(160, 6), (6*6*160)<<2 >>> (input, t_input);
-	// cudaCheckError();
 	int maxbytes = 98304; // 96 KB
     cudaFuncSetAttribute(kernel_2560_OuterProduct_2560, cudaFuncAttributeMaxDynamicSharedMemorySize, maxbytes);
+
+	int iterations = 10;
+    
+    CUevent hStart, hStop;
+	float ms, avg;
+	cudaEventCreate(&hStart, CU_EVENT_BLOCKING_SYNC); // CU_EVENT_DEFAULT
+	cudaEventCreate(&hStop,  CU_EVENT_BLOCKING_SYNC);
+  
+
+	nT1 = getTimeMicroseconds64();
+    //warm up
+	kernel_2560_winograd_BtdB <<<dim3(4, 4, 16), dim3(160, 6), (6*6*160)<<2 >>> (input, t_input);
 	kernel_2560_OuterProduct_2560<<<dim3(36, 8), dim3(512, 2), (2*512 + 16*2*512 + 2*512)<<2 >>> (t_input, l_weights, ip);
-	// cudaCheckError();
 	kernel_2560_winograd_AtIA <<<dim3(4, 4, 2560), dim3(6, 6), ((6*6)<<2)>>> (ip, l_bnBias, l_bnScale, output);
-	// cudaCheckError();
-	cudaDeviceSynchronize();
+    cudaDeviceSynchronize();
+
+    cudaEventRecord( hStart, NULL ) ;
+    for(int iter=0; iter<iterations; iter++){ 
+	kernel_2560_winograd_BtdB <<<dim3(4, 4, 16), dim3(160, 6), (6*6*160)<<2 >>> (input, t_input);
+	kernel_2560_OuterProduct_2560<<<dim3(36, 8), dim3(512, 2), (2*512 + 16*2*512 + 2*512)<<2 >>> (t_input, l_weights, ip);
+	kernel_2560_winograd_AtIA <<<dim3(4, 4, 2560), dim3(6, 6), ((6*6)<<2)>>> (ip, l_bnBias, l_bnScale, output);
+	// cudaDeviceSynchronize();   
+    }
+    cudaEventRecord( hStop, NULL );
+    cudaEventSynchronize( hStop ) ;
+    cudaEventElapsedTime( &ms, hStart, hStop ) ;
+    avg = ms / iterations;
 
 	nT2 = getTimeMicroseconds64();
-	printf("TotalTime = %d us\n", nT2-nT1); 
+	printf("TotalTime = %.1f ms and avg = %.3f ms\n", ms, avg); 
 
 	s = cudaMemcpy(tmp, output, nOutput<<2, cudaMemcpyDeviceToHost);
 	// printf("A. %s\n", cudaGetErrorName(s));
@@ -343,14 +362,164 @@ int kernel_2560() {
 	cudaFree(l_bnBias);
 	cudaFree(l_bnScale);
 	cudaFree(ip);
+	// cudaFree(input);
+
+
+	// free(kernel);
+	free(bnScale);
+	free(bnBias);
+	// free(bias);
+	
+
+    bnBias = get_parameter(bnBiasName2560, 2560);
+	bnScale = get_parameter(bnScaleName2560, 2560);
+	float* eMean = get_parameter(eMeanName2560, 2560);
+	float* eVar = get_parameter(eVarName2560, 2560);
+	float *l_eMean, *l_eVar;
+
+    nInput = 16*16*2560, nOutput = 14*14*2560, nWeights = 3*3*2560*2560, nBias = 2560;
+
+	cudaMalloc((void **) &output, nOutput<<2);
+	cudaMalloc((void **) &l_weights, nWeights<<2);
+	cudaMalloc((void **) &l_bias, nBias<<2);
+	cudaMemcpy(l_weights, kernel, nWeights<<2, cudaMemcpyHostToDevice);
+	cudaMemcpy(l_bias, bias, nBias<<2, cudaMemcpyHostToDevice);
+
+	cudaMalloc((void **) &l_eMean, nBias<<2);
+	cudaMalloc((void **) &l_eVar, nBias<<2);
+	cudaMemcpy(l_bnBias, bnBias, nBias<<2, cudaMemcpyHostToDevice);
+	cudaMemcpy(l_bnScale, bnScale, nBias<<2, cudaMemcpyHostToDevice);
+	cudaMemcpy(l_eMean, eMean, nBias<<2, cudaMemcpyHostToDevice);
+	cudaMemcpy(l_eVar, eVar, nBias<<2, cudaMemcpyHostToDevice);
+
+	cudaMemset((void *) output, 0, nOutput<<2);	
+	
+	
+	cudaMemcpy(l_weights, W, nWeights<<2, cudaMemcpyHostToDevice);
+
+	float tmp_cudnn[nOutput];
+
+	cudnnStatus_t status;
+	float one = 1.0, zero = 0.0;
+	int size;
+
+	cudnnHandle_t handle;
+	status = cudnnCreate(&handle);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed1\n");
+
+	cudnnTensorDescriptor_t xdesc, ydesc, bdesc;
+	cudnnFilterDescriptor_t wdesc; // CUDNN_TENSOR_NHWC, CUDNN_TENSOR_NCHW
+	status = cudnnCreateTensorDescriptor(&xdesc);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed2\n");
+	status = cudnnSetTensor4dDescriptor(xdesc, CUDNN_TENSOR_NHWC, CUDNN_DATA_FLOAT, 1, 2560, 16, 16);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed3\n");
+	status = cudnnCreateTensorDescriptor(&ydesc);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed4\n");
+	status = cudnnSetTensor4dDescriptor(ydesc, CUDNN_TENSOR_NHWC, CUDNN_DATA_FLOAT, 1, 2560, 14, 14);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed5\n");
+	status = cudnnCreateFilterDescriptor(&wdesc);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed6\n");
+	status = cudnnSetFilter4dDescriptor(wdesc, CUDNN_DATA_FLOAT, CUDNN_TENSOR_NCHW, 2560, 2560, 3, 3);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed7\n");
+	status = cudnnCreateTensorDescriptor(&bdesc);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed8\n");
+	status = cudnnSetTensor4dDescriptor(bdesc, CUDNN_TENSOR_NHWC, CUDNN_DATA_FLOAT, 1, 2560, 1, 1);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed9\n");
+	cudnnConvolutionDescriptor_t conv_desc;
+	status = cudnnCreateConvolutionDescriptor(&conv_desc);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed10\n");
+	status = cudnnSetConvolution2dDescriptor(conv_desc, 0,0, 1,1,1,1, CUDNN_CROSS_CORRELATION, CUDNN_DATA_FLOAT); //CUDNN_CONVOLUTION
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed11\n");
+
+	cudnnActivationDescriptor_t act_desc;
+	status = cudnnCreateActivationDescriptor(&act_desc);  
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed12\n");
+	status = cudnnSetActivationDescriptor(act_desc, CUDNN_ACTIVATION_RELU, CUDNN_NOT_PROPAGATE_NAN, 0);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed13\n");
+
+	cudnnTensorDescriptor_t bnScaleBiasMeanVarDesc;
+	status = cudnnCreateTensorDescriptor(&bnScaleBiasMeanVarDesc);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed14\n");
+	status = cudnnSetTensor4dDescriptor(bnScaleBiasMeanVarDesc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, 1, 2560, 1, 1);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed15\n");
+
+	// cudnnConvolutionFwdAlgo_t algo = (cudnnConvolutionFwdAlgo_t)6;
+	// cudnnConvolutionFwdAlgo_t algo = CUDNN_CONVOLUTION_FWD_ALGO_GEMM;
+	cudnnConvolutionFwdAlgo_t algo = CUDNN_CONVOLUTION_FWD_ALGO_WINOGRAD;
+	// cudnnConvolutionFwdAlgo_t algo = CUDNN_CONVOLUTION_FWD_ALGO_WINOGRAD_NONFUSED;
+
+	status = cudnnGetConvolutionForwardWorkspaceSize(handle,
+	   xdesc,
+	   wdesc,
+	   conv_desc,
+	   ydesc,
+	   algo,
+	   (size_t *)&(size));
+
+	float *extra;
+	cudaMalloc((void **) &extra, size);
+
+
+	status = cudnnConvolutionForward(handle, &one,
+			xdesc, input, wdesc, l_weights, 
+			conv_desc, algo, 
+			extra, size, &zero,
+			ydesc, output);
+	if (status != CUDNN_STATUS_SUCCESS) printf("Not Successed1\n");
+	cudaDeviceSynchronize();
+	// nT1_cudnn = getTimeMicroseconds64();
+    cudaEventRecord( hStart, NULL ) ;
+    for(int iter=0; iter<iterations; iter++){  
+		status = cudnnConvolutionForward(handle, &one,
+			xdesc, input, wdesc, l_weights, 
+			conv_desc, algo, 
+			extra, size, &zero,
+			ydesc, output);
+	}
+	cudaEventRecord( hStop, NULL );
+    cudaEventSynchronize( hStop ) ;
+    cudaEventElapsedTime( &ms, hStart, hStop ) ;
+    avg = ms / iterations;
+	printf("TotalTime = %.1f ms and avg = %.3f ms\n", ms, avg); 
+	// if (status != CUDNN_STATUS_SUCCESS) printf("Not Successed1\n");
+
+	// status = cudnnBatchNormalizationForwardInference(handle, CUDNN_BATCHNORM_SPATIAL,
+	// 	&one, &zero, 
+	// 	ydesc, output, ydesc, output,
+	// 	bnScaleBiasMeanVarDesc, l_bnScale, l_bnBias, l_eMean, l_eVar, CUDNN_BN_MIN_EPSILON);
+	// if (status != CUDNN_STATUS_SUCCESS) printf("Not Successed2\n");
+
+	// status = cudnnActivationForward(handle, act_desc, &one,
+	// 	ydesc, output, &zero,
+	// 	ydesc, output);
+	// if (status != CUDNN_STATUS_SUCCESS) printf("Not Successed3\n");
+
+	// cudaDeviceSynchronize();
+	// nT2_cudnn = getTimeMicroseconds64();
+	// printf("cuDNN TotalTime = %d us\n", nT2_cudnn-nT1_cudnn);
+	
+	s = cudaMemcpy(tmp_cudnn, output, nOutput<<2, cudaMemcpyDeviceToHost);
+	printf("%s\n", cudaGetErrorName(s));
+
+
+
+    cudaFree(extra);
+	
+	cudaFree(output);
+	cudaFree(l_weights);
+	cudaFree(l_bias);
+	cudaFree(l_bnBias);
+	cudaFree(l_bnScale);	
 	cudaFree(input);
 
 
+    free(eMean);
+	free(eVar);
 	free(kernel);
 	free(bnScale);
 	free(bnBias);
 	free(bias);
-	
+
 
 	// float *conv_cpu =  (float*)malloc(14*14*2560*4);
 
@@ -363,7 +532,7 @@ int kernel_2560() {
 	free(W);
 
 
-	// output_checker(tmp, conv_cpu, 14, 2560, 1);
+	output_checker(tmp, tmp_cudnn, 14, 2560, 1);
 	// free(conv_cpu);
 	free(tmp);
 

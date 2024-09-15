@@ -8,7 +8,7 @@
 #include <xmmintrin.h>
 #include <immintrin.h>
 
-//#include "cudnn.h"
+#include "cudnn.h"
 #include "util.h"
 #include "Kernel320_winograd.h"
 
@@ -312,29 +312,162 @@ int kernel_320() {
 	cudaFree(l_bnBias);
 	cudaFree(l_bnScale);
 	cudaFree(ip);
+	// cudaFree(input);
+
+	free(bnScale);
+	free(bnBias);
+
+
+   /////////////////////////////////
+
+	// cuDNN
+	bnBias = get_parameter(bnBiasName320, 320);
+	bnScale = get_parameter(bnScaleName320, 320);
+	float* eMean = get_parameter(eMeanName320, 320);
+	float* eVar = get_parameter(eVarName320, 320);
+	float *l_eMean, *l_eVar;
+
+    nInput = 16*16*320, nOutput = 14*14*320, nWeights = 3*3*320*320, nBias = 320;
+
+	cudaMalloc((void **) &output, nOutput<<2);
+	cudaMalloc((void **) &l_weights, nWeights<<2);
+	cudaMalloc((void **) &l_bias, nBias<<2);
+	cudaMemcpy(l_weights, kernel, nWeights<<2, cudaMemcpyHostToDevice);
+	cudaMemcpy(l_bias, bias, nBias<<2, cudaMemcpyHostToDevice);
+
+	cudaMalloc((void **) &l_eMean, nBias<<2);
+	cudaMalloc((void **) &l_eVar, nBias<<2);
+	cudaMemcpy(l_bnBias, bnBias, nBias<<2, cudaMemcpyHostToDevice);
+	cudaMemcpy(l_bnScale, bnScale, nBias<<2, cudaMemcpyHostToDevice);
+	cudaMemcpy(l_eMean, eMean, nBias<<2, cudaMemcpyHostToDevice);
+	cudaMemcpy(l_eVar, eVar, nBias<<2, cudaMemcpyHostToDevice);
+
+	cudaMemset((void *) output, 0, nOutput<<2);	
+	
+	
+	cudaMemcpy(l_weights, W, nWeights<<2, cudaMemcpyHostToDevice);
+
+	float tmp_cudnn[nOutput];
+
+	cudnnStatus_t status;
+	float one = 1.0, zero = 0.0;
+	int size;
+
+	cudnnHandle_t handle;
+	status = cudnnCreate(&handle);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed1\n");
+
+	cudnnTensorDescriptor_t xdesc, ydesc, bdesc;
+	cudnnFilterDescriptor_t wdesc; // CUDNN_TENSOR_NHWC, CUDNN_TENSOR_NCHW
+	status = cudnnCreateTensorDescriptor(&xdesc);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed2\n");
+	status = cudnnSetTensor4dDescriptor(xdesc, CUDNN_TENSOR_NHWC, CUDNN_DATA_FLOAT, 1, 320, 16, 16);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed3\n");
+	status = cudnnCreateTensorDescriptor(&ydesc);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed4\n");
+	status = cudnnSetTensor4dDescriptor(ydesc, CUDNN_TENSOR_NHWC, CUDNN_DATA_FLOAT, 1, 320, 14, 14);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed5\n");
+	status = cudnnCreateFilterDescriptor(&wdesc);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed6\n");
+	status = cudnnSetFilter4dDescriptor(wdesc, CUDNN_DATA_FLOAT, CUDNN_TENSOR_NCHW, 320, 320, 3, 3);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed7\n");
+	status = cudnnCreateTensorDescriptor(&bdesc);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed8\n");
+	status = cudnnSetTensor4dDescriptor(bdesc, CUDNN_TENSOR_NHWC, CUDNN_DATA_FLOAT, 1, 320, 1, 1);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed9\n");
+	cudnnConvolutionDescriptor_t conv_desc;
+	status = cudnnCreateConvolutionDescriptor(&conv_desc);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed10\n");
+	status = cudnnSetConvolution2dDescriptor(conv_desc, 0,0, 1,1,1,1, CUDNN_CROSS_CORRELATION, CUDNN_DATA_FLOAT); //CUDNN_CONVOLUTION
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed11\n");
+
+	cudnnActivationDescriptor_t act_desc;
+	status = cudnnCreateActivationDescriptor(&act_desc);  
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed12\n");
+	status = cudnnSetActivationDescriptor(act_desc, CUDNN_ACTIVATION_RELU, CUDNN_NOT_PROPAGATE_NAN, 0);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed13\n");
+
+	cudnnTensorDescriptor_t bnScaleBiasMeanVarDesc;
+	status = cudnnCreateTensorDescriptor(&bnScaleBiasMeanVarDesc);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed14\n");
+	status = cudnnSetTensor4dDescriptor(bnScaleBiasMeanVarDesc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, 1, 320, 1, 1);
+	if (status != CUDNN_STATUS_SUCCESS) printf("failed15\n");
+
+	// cudnnConvolutionFwdAlgo_t algo = (cudnnConvolutionFwdAlgo_t)6;
+	cudnnConvolutionFwdAlgo_t algo = CUDNN_CONVOLUTION_FWD_ALGO_GEMM;
+
+	status = cudnnGetConvolutionForwardWorkspaceSize(handle,
+	   xdesc,
+	   wdesc,
+	   conv_desc,
+	   ydesc,
+	   algo,
+	   (size_t *)&(size));
+
+	float *extra;
+	cudaMalloc((void **) &extra, size);
+	
+	nT1_cudnn = getTimeMicroseconds64();
+
+	status = cudnnConvolutionForward(handle, &one,
+		xdesc, input, wdesc, l_weights, 
+		conv_desc, algo, 
+		extra, size, &zero,
+		ydesc, output);
+	if (status != CUDNN_STATUS_SUCCESS) printf("Not Successed1\n");
+
+	// status = cudnnBatchNormalizationForwardInference(handle, CUDNN_BATCHNORM_SPATIAL,
+	// 	&one, &zero, 
+	// 	ydesc, output, ydesc, output,
+	// 	bnScaleBiasMeanVarDesc, l_bnScale, l_bnBias, l_eMean, l_eVar, CUDNN_BN_MIN_EPSILON);
+	// if (status != CUDNN_STATUS_SUCCESS) printf("Not Successed2\n");
+
+	// status = cudnnActivationForward(handle, act_desc, &one,
+	// 	ydesc, output, &zero,
+	// 	ydesc, output);
+	// if (status != CUDNN_STATUS_SUCCESS) printf("Not Successed3\n");
+
+	cudaDeviceSynchronize();
+	nT2_cudnn = getTimeMicroseconds64();
+	printf("cuDNN TotalTime = %d us\n", nT2_cudnn-nT1_cudnn);
+	
+	s = cudaMemcpy(tmp_cudnn, output, nOutput<<2, cudaMemcpyDeviceToHost);
+	printf("%s\n", cudaGetErrorName(s));
+
+
+
+    cudaFree(extra);
+	
+	cudaFree(output);
+	cudaFree(l_weights);
+	cudaFree(l_bias);
+	cudaFree(l_bnBias);
+	cudaFree(l_bnScale);	
 	cudaFree(input);
 
 
+    free(eMean);
+	free(eVar);
 	free(kernel);
 	free(bnScale);
 	free(bnBias);
 	free(bias);
 	
 
-	float *conv_cpu =  (float*)malloc(14*14*320*4);
+	// float *conv_cpu =  (float*)malloc(14*14*320*4);
 
-    nT1_cudnn = getTimeMicroseconds64();
-	compute_cpu(input_, W, conv_cpu, 16, 320, 320, 1);
-    nT2_cudnn = getTimeMicroseconds64();
-	printf("TotalTime = %d us\n", nT2_cudnn-nT1_cudnn);  
+    // nT1_cudnn = getTimeMicroseconds64();
+	// compute_cpu(input_, W, conv_cpu, 16, 320, 320, 1);
+    // nT2_cudnn = getTimeMicroseconds64();
+	// printf("TotalTime = %d us\n", nT2_cudnn-nT1_cudnn);  
 	
 	free(input_);
 	free(W);
 
 
-//	output_checker(tmp, tmp_cudnn, 14, 320, 1);
-	output_checker(tmp, conv_cpu, 14, 320, 1);
-	free(conv_cpu);
+	output_checker(tmp, tmp_cudnn, 14, 320, 1);
+	// output_checker(tmp, conv_cpu, 14, 320, 1);
+	// free(conv_cpu);
 	free(tmp);
 
 	return ((nT2-nT1) << 16);
