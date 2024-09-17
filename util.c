@@ -43,6 +43,22 @@ float* get_parameter(const char* filename, int size) {
   return parameter;
 }
 
+void find_minmax(const float *val, const int l, float *mi, float *mx, int *mi_i, int *mx_i){
+  *mi = FLT_MAX;
+  *mx = -FLT_MAX;
+  for(int i= 0; i < l; i++){
+      if((*mi) > val[i]){
+           (*mi) = val[i];
+           (*mi_i) = i;
+      }
+      if((*mx) < val[i]){
+           (*mx) = val[i];
+           (*mx_i) = i;
+      }
+  }
+
+}
+
 float output_checker(float* A, float* B, int len, int channel, int shift) {
   int error_cnt = 0, i, j, k;
   float max_error = 0;

@@ -25,6 +25,8 @@ uint64_t getTimeMicroseconds64();
 float output_checker(float* A, float* B, int len, int channel, int shift);
 void compute_cpu(float* A, float* W,  float *C, int len, int in_channel,  int out_che, int shift);
 
+void find_minmax(const float *val, const int l, float *mi, float *mx, int *mi_i, int *mx_i);
+
 
 #ifdef __cplusplus
 }
