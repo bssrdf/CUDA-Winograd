@@ -120,10 +120,10 @@ __global__ void kernel_2560_1280_64_winograd_BtdB(float *pInputs, float *pOutput
 
 	for (int i = 0; i < 6; i++) {
         // 655360 = 16*16*2560; 
-		pOutputs[(Iny1 + i*6)*655360 + ((blockIdx.x<<4)+blockIdx.y)*2560 + Inz + Part*160] = BTdB[i];
-		if((Iny1 + i*6)*655360 + ((blockIdx.x<<4)+blockIdx.y)*2560 + Inz + Part*160 == 649639){
-			printf(" AA, %d, %d, %d, %d, %d, %d \n", blockIdx.x, blockIdx.y, blockIdx.z, Inz, Iny1, i);
-		}
+		pOutputs[(Iny1 + i*6)*655360 + ((blockIdx.x<<2)+blockIdx.y)*2560 + Inz + Part*160] = BTdB[i];
+		// if((Iny1 + i*6)*655360 + ((blockIdx.x<<4)+blockIdx.y)*2560 + Inz + Part*160 == 649639){
+		// 	printf(" AA, %d, %d, %d, %d, %d, %d \n", blockIdx.x, blockIdx.y, blockIdx.z, Inz, Iny1, i);
+		// }
 	}
 }
 
