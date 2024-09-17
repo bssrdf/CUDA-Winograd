@@ -13,7 +13,7 @@
 
 //#include "cudnn.h"
 #include "util.h"
-#include "Kernel_in2560_out1280_winograd.h"
+#include "Kernel_64x64_2560_1280_winograd.h"
 
 
 #define cudaCheckError() {																\
@@ -27,9 +27,9 @@
 #define MY_KERNEL 0
 
 #define d(input, i, j, Inz) ( input[Inz + i*960 + (j*160)] )
-__global__ void kernel_2560_1280_winograd_BtdB(float *pInputs, float *pOutputs) {
-	int Inx = blockIdx.x<<2, Iny0 = blockIdx.y<<2, Part = blockIdx.z, Iny1 = threadIdx.y, Inz = threadIdx.x;
-	int Iny = Iny0+Iny1, stride_r = 40960, stride_c = 2560; //  40960 = 16*2560
+__global__ void kernel_2560_1280_64_winograd_BtdB(float *pInputs, float *pOutputs) {
+	int Inx = blockIdx.x<<2, Iny0 = blockIdx.y<<4, Part = blockIdx.z, Iny1 = threadIdx.y, Inz = threadIdx.x;
+	int Iny = Iny0+Iny1, stride_r = 163840, stride_c = 2560; //  163840 = 64*2560
 	int c_glb_start = Inx*stride_r + Iny*stride_c + Inz + Part*160, c_input = Iny1*160 + Inz;
 
 	extern __shared__ float input[];
@@ -119,18 +119,19 @@ __global__ void kernel_2560_1280_winograd_BtdB(float *pInputs, float *pOutputs) 
 	__syncthreads();
 
 	for (int i = 0; i < 6; i++) {
-		pOutputs[(Iny1 + i*6)*40960 + ((blockIdx.x<<2)+blockIdx.y)*2560 + Inz + Part*160] = BTdB[i];
+        // 655360 = 16*16*2560; 
+		pOutputs[(Iny1 + i*6)*655360 + ((blockIdx.x<<4)+blockIdx.y)*2560 + Inz + Part*160] = BTdB[i];
 	}
 }
 
-__global__ void kernel_2560_1280_winograd_AtIA(float *pInputs, float *pBiases, float *pScales, float *pOutputs) {
+__global__ void kernel_2560_1280_64_winograd_AtIA(float *pInputs, float *pBiases, float *pScales, float *pOutputs) {
 	int Tilex = blockIdx.x, Tiley = blockIdx.y, Iny = threadIdx.y, kz = blockIdx.z, Inx = threadIdx.x;
 	int c_input = Inx*6 + Iny;
 
 	__shared__ float bias, scale;
 	extern __shared__ float input[];
 
-	input[c_input] = pInputs[c_input*16*1280 + (Tilex*4+Tiley)*1280 + kz];
+	input[c_input] = pInputs[c_input*16*16*1280 + (Tilex*16+Tiley)*1280 + kz];
 	bias = pBiases[kz];
 	scale = pScales[kz];
 	__syncthreads();
@@ -166,50 +167,41 @@ __global__ void kernel_2560_1280_winograd_AtIA(float *pInputs, float *pBiases, f
 			// o = scale*(input[x]+input[x+1]+input[x+2]+input[x+3]+input[x+4]) + bias;
 			o = (input[x]+input[x+1]+input[x+2]+input[x+3]+input[x+4]);
 			// pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+1)*1280 + kz] = o > 0 ? o : 0;
-			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+1)*1280 + kz] = o;
-			// if((((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+1)*1280 + kz == 327679){
-			// 	printf("A: %d, %d, %d, %d, %d \n", Tilex, Tiley, kz, Inx, Iny);
-			// }
+			// when Tilex=Tiley=kz=Inx=Iny=0, the first index to POutputs is (64+1)*1280,
+			// which is to skip all channels over the first row plus the first channel on the 
+			// 2nd row, because they are padded 
+			pOutputs[(((Tilex<<2)+1+Inx)*64 + (Tiley<<2)+1)*1280 + kz] = o;
 			break;
 		case 1:
 			x = Inx*6;
 			// o = scale*(input[x+1] - input[x+2] + 2*input[x+3] - 2*input[x+4]) + bias;
 			o = (input[x+1] - input[x+2] + 2*input[x+3] - 2*input[x+4]);
-			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+2)*1280 + kz] = o;
-			// if((((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+2)*1280 + kz == 327679){
-			// 	printf("B: %d, %d, %d, %d, %d \n", Tilex, Tiley, kz, Inx, Iny);
-			// }
+			pOutputs[(((Tilex<<2)+1+Inx)*64 + (Tiley<<2)+2)*1280 + kz] = o;
 			break;
 		case 2:
 			// if (Tiley == 3) break;
 			x = Inx*6;
 			// o = scale*(input[x+1] + input[x+2] + 4*input[x+3] + 4*input[x+4]) + bias;
 			o = (input[x+1] + input[x+2] + 4*input[x+3] + 4*input[x+4]);
-			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+3)*1280 + kz] = o;
-			// if((((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+3)*1280 + kz == 327679){
-			// 	printf("C: %d, %d, %d, %d, %d \n", Tilex, Tiley, kz, Inx, Iny);
-			// }
+			pOutputs[(((Tilex<<2)+1+Inx)*64 + (Tiley<<2)+3)*1280 + kz] = o;
 			break;
 		case 3:
 			// if (Tiley == 3) break;
 			x = Inx*6;
 			// o = scale*(input[x+1] - input[x+2] + 8*input[x+3] - 8*input[x+4] + input[x+5]) + bias;
 			o = (input[x+1] - input[x+2] + 8*input[x+3] - 8*input[x+4] + input[x+5]);
-			pOutputs[(((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+4)*1280 + kz] = o;
-			// if((((Tilex<<2)+1+Inx)*16 + (Tiley<<2)+4)*1280 + kz == 327679){
-			// 	printf("D: %d, %d, %d, %d, %d \n", Tilex, Tiley, kz, Inx, Iny);
-			// }
+			pOutputs[(((Tilex<<2)+1+Inx)*64 + (Tiley<<2)+4)*1280 + kz] = o;
 			break;
 	}
 }
 
-__global__ void kernel_2560_1280_OuterProduct_2560_1280(float *A, float *B, float *C) {
+__global__ void kernel_2560_1280_64_OuterProduct_2560_1280(float *A, float *B, float *C) {
 	int Tile = blockIdx.x, Part = blockIdx.y, tX = threadIdx.x, tY = threadIdx.y;
 	u_int64_t c_input = tY*1280 + tX, 
 	    c_kernel = tY*256 + tX,  
 		c_tr_in = tY*2560 + tX, 
-		T_offset = Tile*40960 + Part*2560*4 + c_tr_in, // 40960 = 16*2560, 1024 = 512*2
-		C_start = Tile*20480 + Part*1280*4 + c_input, // 20480 = 16*1280, 1024 = 512*2
+		T_offset = Tile*655360 + Part*2560*4 + c_tr_in, // 655360 = 16*16*2560, 1024 = 512*2
+		C_start = Tile*327680 + Part*1280*4 + c_input, // 327680 = 16*16*1280, 1024 = 512*2
 	    B_offset = Tile*3276800 + c_input; // 3276800 = 1280*2560
     
 	extern __shared__ float input[];
@@ -281,10 +273,10 @@ __global__ void kernel_2560_1280_OuterProduct_2560_1280(float *A, float *B, floa
 	
 }
 
-int kernel_2560_1280() {
-	float *input_ = get_parameter(inputName2560_1280, 16*16*2560);
-	float *bias = get_parameter(biasName2560_1280, 2560);
-	float *W = get_parameter(weight_NCHW_Name2560_1280, 3*3*2560*1280);
+int kernel_2560_1280_64() {
+	float *input_ = get_parameter(inputName2560_1280_64, 64*64*2560);
+	float *bias = get_parameter(biasName2560_1280_64, 2560);
+	float *W = get_parameter(weight_NCHW_Name2560_1280_64, 3*3*2560*1280);
 	float *input, *output, *l_weights, *l_bias;
 	uint64_t nT1 = 0, nT2 = 0, nT1_cudnn = 0, nT2_cudnn = 0;
 
@@ -300,9 +292,9 @@ int kernel_2560_1280() {
 	// My Kernel
 
 	/////////////////////////////////
-	float *kernel = get_parameter(weight_winograd_Name2560_1280, 36*2560*1280), *t_input, *ip;
-	int nInput = 16*16*2560, nOutput = 16*16*1280, nWeights = 36*2560*1280, nBias = 2560, 
-	    nTransInput = 16*6*6*2560, nInnerProd = 16*6*6*1280;
+	float *kernel = get_parameter(weight_winograd_Name2560_1280_64, 36*2560*1280), *t_input, *ip;
+	int nInput = 64*64*2560, nOutput = 64*64*1280, nWeights = 36*2560*1280, nBias = 2560, 
+	    nTransInput = 16*16*6*6*2560, nInnerProd = 16*16*6*6*1280;
 	float *l_bnBias, *l_bnScale, *bnBias, *bnScale;
 
 	cudaMalloc((void **) &input, nInput<<2);
@@ -322,8 +314,8 @@ int kernel_2560_1280() {
 	cudaMemcpy(l_weights, kernel, nWeights<<2, cudaMemcpyHostToDevice);
 	cudaMemcpy(l_bias, bias, nBias<<2, cudaMemcpyHostToDevice);
 
-	bnBias = get_parameter(bnBias_winograd_Name2560_1280, 2560);
-	bnScale = get_parameter(bnScale_winograd_Name2560_1280, 2560);
+	bnBias = get_parameter(bnBias_winograd_Name2560_1280_64, 2560);
+	bnScale = get_parameter(bnScale_winograd_Name2560_1280_64, 2560);
 	cudaMalloc((void **) &l_bnBias, nBias<<2);
 	cudaMalloc((void **) &l_bnScale, nBias<<2);
 	cudaMemcpy(l_bnBias, bnBias, nBias<<2, cudaMemcpyHostToDevice);
@@ -339,18 +331,18 @@ int kernel_2560_1280() {
 	cudaEventCreate(&hStop,  CU_EVENT_BLOCKING_SYNC);
 
 	int maxbytes = 98304; // 96 KB
-    cudaFuncSetAttribute(kernel_2560_1280_OuterProduct_2560_1280, cudaFuncAttributeMaxDynamicSharedMemorySize, maxbytes);
+    cudaFuncSetAttribute(kernel_2560_1280_64_OuterProduct_2560_1280, cudaFuncAttributeMaxDynamicSharedMemorySize, maxbytes);
     // warm up
-	kernel_2560_1280_winograd_BtdB <<<dim3(4, 4, 16), dim3(160, 6), (6*6*160)<<2 >>> (input, t_input);
-	kernel_2560_1280_OuterProduct_2560_1280<<<dim3(36, 4), dim3(256, 4), (4*256 + 8*4*256 + 4*256)<<2 >>> (t_input, l_weights, ip);
-	kernel_2560_1280_winograd_AtIA <<<dim3(4, 4, 1280), dim3(6, 6), ((6*6)<<2)>>> (ip, l_bnBias, l_bnScale, output);
+	kernel_2560_1280_64_winograd_BtdB <<<dim3(16, 16, 16), dim3(160, 6), (6*6*160)<<2 >>> (input, t_input);
+	kernel_2560_1280_64_OuterProduct_2560_1280<<<dim3(36, 64), dim3(256, 4), (4*256 + 8*4*256 + 4*256)<<2 >>> (t_input, l_weights, ip);
+	kernel_2560_1280_64_winograd_AtIA <<<dim3(16, 16, 1280), dim3(6, 6), ((6*6)<<2)>>> (ip, l_bnBias, l_bnScale, output);
     cudaDeviceSynchronize();
 
     cudaEventRecord( hStart, NULL ) ;
     for(int iter=0; iter<iterations; iter++){ 
-	kernel_2560_1280_winograd_BtdB <<<dim3(4, 4, 16), dim3(160, 6), (6*6*160)<<2 >>> (input, t_input);
-	kernel_2560_1280_OuterProduct_2560_1280<<<dim3(36, 4), dim3(256, 4), (4*256 + 8*4*256 + 4*256)<<2 >>> (t_input, l_weights, ip);
-	kernel_2560_1280_winograd_AtIA <<<dim3(4, 4, 1280), dim3(6, 6), ((6*6)<<2)>>> (ip, l_bnBias, l_bnScale, output);
+	kernel_2560_1280_64_winograd_BtdB <<<dim3(16, 16, 16), dim3(160, 6), (6*6*160)<<2 >>> (input, t_input);
+	kernel_2560_1280_64_OuterProduct_2560_1280<<<dim3(36, 64), dim3(256, 4), (4*256 + 8*4*256 + 4*256)<<2 >>> (t_input, l_weights, ip);
+	kernel_2560_1280_64_winograd_AtIA <<<dim3(16, 16, 1280), dim3(6, 6), ((6*6)<<2)>>> (ip, l_bnBias, l_bnScale, output);
 	}
 	// cudaDeviceSynchronize();
 	cudaEventRecord( hStop, NULL );
@@ -361,15 +353,15 @@ int kernel_2560_1280() {
 	printf("MyKernal: TotalTime = %.1f ms and avg = %.3f ms\n", ms, avg); 
 
 	s = cudaMemcpy(tmp, output, nOutput<<2, cudaMemcpyDeviceToHost);
-	// printf("A. %s, %f \n", cudaGetErrorName(s), tmp[57183]);
+	printf("A. %s, %f \n", cudaGetErrorName(s), tmp[57183]);
 	cudaCheckError();
 
 	cudaFree(t_input);
 	cudaFree(output);
 	cudaFree(l_weights);
 	cudaFree(l_bias);
-	cudaFree(l_bnBias);
-	cudaFree(l_bnScale);
+	// cudaFree(l_bnBias);
+	// cudaFree(l_bnScale);
 	cudaFree(ip);
 	// cudaFree(input);
 
@@ -380,13 +372,13 @@ int kernel_2560_1280() {
 	// free(bias);
 	
 
-    bnBias = get_parameter(bnBiasName2560_1280, 2560);
-	bnScale = get_parameter(bnScaleName2560_1280, 2560);
-	float* eMean = get_parameter(eMeanName2560_1280, 2560);
-	float* eVar = get_parameter(eVarName2560_1280, 2560);
+    bnBias = get_parameter(bnBiasName2560_1280_64, 2560);
+	bnScale = get_parameter(bnScaleName2560_1280_64, 2560);
+	float* eMean = get_parameter(eMeanName2560_1280_64, 2560);
+	float* eVar = get_parameter(eVarName2560_1280_64, 2560);
 	float *l_eMean, *l_eVar;
 
-    nInput = 16*16*2560, nOutput = 14*14*1280, nWeights = 3*3*2560*1280, nBias = 2560;
+    nInput = 64*64*2560, nOutput = 62*62*1280, nWeights = 3*3*2560*1280, nBias = 2560;
 
 	cudaMalloc((void **) &output, nOutput<<2);
 	cudaMalloc((void **) &l_weights, nWeights<<2);
@@ -406,7 +398,7 @@ int kernel_2560_1280() {
 	
 	cudaMemcpy(l_weights, W, nWeights<<2, cudaMemcpyHostToDevice);
 
-	float tmp_cudnn[nOutput];
+	float *tmp_cudnn =  (float*)malloc(nOutput<<2);
 
 	cudnnStatus_t status;
 	float one = 1.0, zero = 0.0;
@@ -420,11 +412,11 @@ int kernel_2560_1280() {
 	cudnnFilterDescriptor_t wdesc; // CUDNN_TENSOR_NHWC, CUDNN_TENSOR_NCHW
 	status = cudnnCreateTensorDescriptor(&xdesc);
 	if (status != CUDNN_STATUS_SUCCESS) printf("failed2\n");
-	status = cudnnSetTensor4dDescriptor(xdesc, CUDNN_TENSOR_NHWC, CUDNN_DATA_FLOAT, 1, 2560, 16, 16);
+	status = cudnnSetTensor4dDescriptor(xdesc, CUDNN_TENSOR_NHWC, CUDNN_DATA_FLOAT, 1, 2560, 64, 64);
 	if (status != CUDNN_STATUS_SUCCESS) printf("failed3\n");
 	status = cudnnCreateTensorDescriptor(&ydesc);
 	if (status != CUDNN_STATUS_SUCCESS) printf("failed4\n");
-	status = cudnnSetTensor4dDescriptor(ydesc, CUDNN_TENSOR_NHWC, CUDNN_DATA_FLOAT, 1, 1280, 14, 14);
+	status = cudnnSetTensor4dDescriptor(ydesc, CUDNN_TENSOR_NHWC, CUDNN_DATA_FLOAT, 1, 1280, 62, 62);
 	if (status != CUDNN_STATUS_SUCCESS) printf("failed5\n");
 	status = cudnnCreateFilterDescriptor(&wdesc);
 	if (status != CUDNN_STATUS_SUCCESS) printf("failed6\n");
@@ -516,13 +508,13 @@ int kernel_2560_1280() {
     cudaFree(extra);
 	
 
-	cudaFree(t_input);
+	// cudaFree(t_input);
 	cudaFree(output);
 	cudaFree(l_weights);
 	cudaFree(l_bias);
 	cudaFree(l_bnBias);
 	cudaFree(l_bnScale);
-	cudaFree(ip);
+	// cudaFree(ip);
 	cudaFree(input);
 
 
@@ -543,11 +535,11 @@ int kernel_2560_1280() {
 	
 	free(input_);
 	free(W);
+    
 
-
-	output_checker(tmp, tmp_cudnn, 14, 1280, 1);
+	output_checker(tmp, tmp_cudnn, 62, 1280, 1);
 	// free(conv_cpu);
 	free(tmp);
-
+    free(tmp_cudnn);
 	return ((nT2-nT1) << 16);
 }

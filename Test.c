@@ -12,6 +12,7 @@
 #include "Kernel320_winograd.h"
 #include "Kernel2560_winograd.h"
 #include "Kernel_in2560_out1280_winograd.h"
+#include "Kernel_64x64_2560_1280_winograd.h"
 #include "util.h"
 
 int main(int argc, char** argv) {
@@ -56,8 +57,10 @@ int main(int argc, char** argv) {
         break; 
       case 9:
         res = kernel_2560_1280();
+        break;   
+      case 10:
+        res = kernel_2560_1280_64();
         break; 
-  
     }
     if (i > 1) {
       sum += res >> 16;
