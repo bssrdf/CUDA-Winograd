@@ -7,7 +7,7 @@
 #include <assert.h>
 #include <xmmintrin.h>
 #include <immintrin.h>
-
+#include "cuda.h"
 #include "cudnn.h"
 #include "util.h"
 #include "Kernel256_winograd.h"
@@ -34,6 +34,8 @@ __global__ void kernel_256_winograd_BtdB(float *pInputs, float *pOutputs) {
 	int stride_768[6] = {0, 768, 1536, 2304, 3072, 3840}; // 768 = 6*128
 	for (int i = 0; i < 6; i++) {
 		input[c_input + stride_768[i]] = pInputs[c_glb_start + i*stride_r];
+		if(c_glb_start + i*stride_r >=  65536)
+		   printf("%d  out of bounds value = %f \n", i,  pInputs[c_glb_start + i*stride_r]);
 	}
 	__syncthreads();
 
@@ -244,7 +246,7 @@ int kernel_256() {
 
 	cudaMemset((void *) input, 0, nInput<<3);
 	cudaMemset((void *) output, 0, nOutput<<2);
-	cudaMemset((void *) t_input, 0, nTransInput<<2);
+	// cudaMemset((void *) t_input, 0, nTransInput<<2);
 	cudaMemset((void *) l_weights, 0, nWeights<<2);
 	cudaMemset((void *) ip, 0, nInnerProd<<2);
 
@@ -260,14 +262,33 @@ int kernel_256() {
 	cudaMemcpy(l_bnScale, bnScale, nBias<<2, cudaMemcpyHostToDevice);
 
 	float tmp[nOutput];
+    int iterations = 10;
 
-	nT1 = getTimeMicroseconds64();
+	CUevent hStart, hStop;
+	float ms, avg;
+	cudaEventCreate(&hStart, CU_EVENT_BLOCKING_SYNC); // CU_EVENT_DEFAULT
+	cudaEventCreate(&hStop,  CU_EVENT_BLOCKING_SYNC);
 
 	kernel_256_winograd_BtdB <<<dim3(4, 4, 2), dim3(128, 6), (6*6*128)<<2 >>> (input, t_input);
 	kernel_256_OuterProduct_256<<<dim3(36, 2), dim3(256, 4), (8*256 + 32*256 + 8*256)<<2 >>> (t_input, l_weights, ip);
 	kernel_256_winograd_AtIA <<<dim3(4, 4, 256), dim3(6, 6), ((6*6)<<2)>>> (ip, l_bnBias, l_bnScale, output);
-	//cudaCheckError();
 	cudaDeviceSynchronize();
+	nT1 = getTimeMicroseconds64();
+
+    cudaEventRecord( hStart, NULL ) ;
+    for(int iter=0; iter<iterations; iter++){ 
+	kernel_256_winograd_BtdB <<<dim3(4, 4, 2), dim3(128, 6), (6*6*128)<<2 >>> (input, t_input);
+	kernel_256_OuterProduct_256<<<dim3(36, 2), dim3(256, 4), (8*256 + 32*256 + 8*256)<<2 >>> (t_input, l_weights, ip);
+	kernel_256_winograd_AtIA <<<dim3(4, 4, 256), dim3(6, 6), ((6*6)<<2)>>> (ip, l_bnBias, l_bnScale, output);
+	}
+	//cudaCheckError();
+	// cudaDeviceSynchronize();
+	cudaEventRecord( hStop, NULL );
+    cudaEventSynchronize( hStop ) ;
+    cudaEventElapsedTime( &ms, hStart, hStop ) ;
+    avg = ms / iterations;
+
+	printf("MyKernal: TotalTime = %.1f ms and avg = %.3f ms\n", ms, avg); 
 	
 	nT2 = getTimeMicroseconds64();
 	printf("TotalTime = %d us\n", nT2-nT1); 

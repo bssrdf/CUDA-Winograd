@@ -28,6 +28,7 @@
 
 #define d(input, i, j, Inz) ( input[Inz + i*960 + (j*160)] )
 __global__ void kernel_2560_1280_64_winograd_BtdB(float *pInputs, float *pOutputs) {
+	// dim3(16, 16, 16), dim3(160, 6)
 	int Inx = blockIdx.x<<2, Iny0 = blockIdx.y<<2, Part = blockIdx.z, Iny1 = threadIdx.y, Inz = threadIdx.x;
 	int Iny = Iny0+Iny1, stride_r = 163840, stride_c = 2560; //  163840 = 64*2560
 	int c_glb_start = Inx*stride_r + Iny*stride_c + Inz + Part*160, c_input = Iny1*160 + Inz;
@@ -38,7 +39,15 @@ __global__ void kernel_2560_1280_64_winograd_BtdB(float *pInputs, float *pOutput
 	for (int i = 0; i < 6; i++) {
 		// if(blockIdx.x == 3 && blockIdx.y == 0 && Part == 0 && Inz == 0 && Iny1 == 0)
 		//    printf("%d: %d, %d \n", i, c_input + stride_960[i], c_glb_start + i*stride_r);
-		input[c_input + stride_960[i]] = pInputs[c_glb_start + i*stride_r];
+		float val;
+        if(Inx + i >= 64 || Iny >= 64)
+		    val = 0.f;		    
+		else
+		    val = pInputs[c_glb_start + i*stride_r];
+		// input[c_input + stride_960[i]] = pInputs[c_glb_start + i*stride_r];
+		input[c_input + stride_960[i]] = val;
+		// if(c_glb_start + i*stride_r >= 10485760)
+		//    printf("%d  out of bounds value = %f \n", i,  pInputs[c_glb_start + i*stride_r]);
 	}
 	__syncthreads();
 
@@ -118,15 +127,17 @@ __global__ void kernel_2560_1280_64_winograd_BtdB(float *pInputs, float *pOutput
 	}
 	__syncthreads();
 
+	// dim3(16, 16, 16), dim3(160, 6)
+
 	for (int i = 0; i < 6; i++) {
         // 655360 = 16*16*2560; 
-		pOutputs[(Iny1 + i*6)*655360 + ((blockIdx.x<<2)+blockIdx.y)*2560 + Inz + Part*160] = BTdB[i];
-		// if((Iny1 + i*6)*655360 + ((blockIdx.x<<4)+blockIdx.y)*2560 + Inz + Part*160 == 649639){
+		pOutputs[(Iny1 + i*6)*655360 + ((blockIdx.x*16)+blockIdx.y)*2560 + Inz + Part*160] = BTdB[i];
+		// if((Iny1 + i*6)*655360 + (blockIdx.x*16+blockIdx.y)*2560 + Inz + Part*160 == 156170){
 		// 	printf(" AA, %d, %d, %d, %d, %d, %d \n", blockIdx.x, blockIdx.y, blockIdx.z, Inz, Iny1, i);
 		// }
 	}
 }
-
+   // dim3(16, 16, 1280), dim3(6, 6), ((6*6)<<2)
 __global__ void kernel_2560_1280_64_winograd_AtIA(float *pInputs, float *pBiases, float *pScales, float *pOutputs) {
 	int Tilex = blockIdx.x, Tiley = blockIdx.y, Iny = threadIdx.y, kz = blockIdx.z, Inx = threadIdx.x;
 	int c_input = Inx*6 + Iny;
@@ -159,8 +170,8 @@ __global__ void kernel_2560_1280_64_winograd_AtIA(float *pInputs, float *pBiases
 	input[c_input] = tmp;
 	__syncthreads();
 
-	// if (Inx > 3 || (Tilex == 3 && Inx > 1)) return;
-	if (Inx > 3) return;
+	if (Inx > 3 || (Tilex == 15 && Inx > 1)) return;
+	// if (Inx > 3) return;
 	
 	int x;
 	float o;
@@ -182,14 +193,14 @@ __global__ void kernel_2560_1280_64_winograd_AtIA(float *pInputs, float *pBiases
 			pOutputs[(((Tilex<<2)+1+Inx)*64 + (Tiley<<2)+2)*1280 + kz] = o;
 			break;
 		case 2:
-			// if (Tiley == 3) break;
+			if (Tiley == 15) break;
 			x = Inx*6;
 			// o = scale*(input[x+1] + input[x+2] + 4*input[x+3] + 4*input[x+4]) + bias;
 			o = (input[x+1] + input[x+2] + 4*input[x+3] + 4*input[x+4]);
 			pOutputs[(((Tilex<<2)+1+Inx)*64 + (Tiley<<2)+3)*1280 + kz] = o;
 			break;
 		case 3:
-			// if (Tiley == 3) break;
+			if (Tiley == 15) break;
 			x = Inx*6;
 			// o = scale*(input[x+1] - input[x+2] + 8*input[x+3] - 8*input[x+4] + input[x+5]) + bias;
 			o = (input[x+1] - input[x+2] + 8*input[x+3] - 8*input[x+4] + input[x+5]);
@@ -198,6 +209,8 @@ __global__ void kernel_2560_1280_64_winograd_AtIA(float *pInputs, float *pBiases
 	}
 }
 
+
+// dim3(36, 64), dim3(256, 4)
 __global__ void kernel_2560_1280_64_OuterProduct_2560_1280(float *A, float *B, float *C) {
 	int Tile = blockIdx.x, Part = blockIdx.y, tX = threadIdx.x, tY = threadIdx.y;
 	u_int64_t c_input = tY*1280 + tX, 
@@ -217,6 +230,8 @@ __global__ void kernel_2560_1280_64_OuterProduct_2560_1280(float *A, float *B, f
 	for (int l = 0; l < 5; l++){		
 		u_int64_t B_start_l = B_offset + l*256;
 		u_int64_t C_offset = C_start + l*256;
+		// if(C_offset == 156170)
+		//  	printf(" AA, %d, %d, %d, %d, %d \n", blockIdx.x, blockIdx.y, threadIdx.x, threadIdx.y, l);
 		out[c_kernel] = 0.0f;
 
 		for (int i = 0; i < 10; i++){
@@ -261,12 +276,20 @@ __global__ void kernel_2560_1280_64_OuterProduct_2560_1280(float *A, float *B, f
 				int y_tmp = tY*256 + (k<<5); //*32
 				for (int j = 0; j < 32; j++) {
 					sum += input[y_tmp + j] * kernel[tX + B_stride[j]];
-				}
+					// if(blockIdx.x == 0 && blockIdx.y == 30 && threadIdx.x ==10 && threadIdx.y == 2 && l == 0 && k == 0)
+					// 	printf("%d, %d, %d, %f, %f, %f\n", i, k, j, sum, input[y_tmp + j], kernel[tX + B_stride[j]]);			
+				}				
 				out[c_kernel] += sum;
+				// if(blockIdx.x == 0 && blockIdx.y == 30 && threadIdx.x ==10 && threadIdx.y == 2 && l == 0)
+				// 	printf("%d, %d, %f, %f \n", i, k, sum, out[c_kernel]);			
 				__syncthreads();
 			}
+			// if(blockIdx.x == 0 && blockIdx.y == 30 && threadIdx.x ==10 && threadIdx.y == 2 && l == 0)
+			// 	printf("%d, %f \n", i, out[c_kernel]);
 			// assumes C[T_offset] is initialized with 0.f    
 		}
+		// if(blockIdx.x == 0 && blockIdx.y == 30 && threadIdx.x ==10 && threadIdx.y == 2 && l == 0)
+		//    printf(" %f \n", out[c_kernel]);
 		C[C_offset] = out[c_kernel];
 		// if(tX == 0 && tY == 1 && Tile == 0 && Part == 0){
 		// 	printf("%d, %d, %ld, %f, %f \n", l, i, C_offset, C[C_offset],  out[c_kernel]);
@@ -307,11 +330,11 @@ int kernel_2560_1280_64() {
 	cudaMalloc((void **) &t_input, nTransInput<<2);
 	cudaMalloc((void **) &ip, nInnerProd<<2);
 
-	cudaMemset((void *) input, 0, nInput<<2);
-	cudaMemset((void *) output, 0, nOutput<<2);
-	cudaMemset((void *) t_input, 0, nTransInput<<2);
-	cudaMemset((void *) l_weights, 0, nWeights<<2);
-	cudaMemset((void *) ip, 0, nInnerProd<<2);
+	// cudaMemset((void *) input, 0, nInput<<2);
+	// cudaMemset((void *) output, 0, nOutput<<2);
+	// cudaMemset((void *) t_input, 0, nTransInput<<2);
+	// cudaMemset((void *) l_weights, 0, nWeights<<2);
+	// cudaMemset((void *) ip, 0, nInnerProd<<2);
 
 	cudaMemcpy(input, input_, nInput<<2, cudaMemcpyHostToDevice);
 	cudaMemcpy(l_weights, kernel, nWeights<<2, cudaMemcpyHostToDevice);
@@ -326,13 +349,19 @@ int kernel_2560_1280_64() {
 
 	float *tmp = (float*)malloc(nOutput*4);
 
-	float *tmps = (float*)malloc(nTransInput<<2);
-
+    // float *tmps = (float*)malloc(nTransInput<<2);
+	// float *tmps = (float*)malloc(nInnerProd<<2);
+	float *tmps = (float*)malloc(nWeights<<2);
+     
 	int iterations = 10;
-	int ll = 649639;
+	int ll = 44506;
 
 	float mi, mx;
 	int mi_i, mx_i;
+
+	// s = cudaMemcpy(tmps, l_weights, nWeights<<2, cudaMemcpyDeviceToHost);
+	// find_minmax(tmps, nWeights, &mi, &mx, &mi_i, &mx_i);
+	// printf("l_weights 0 : %s, %f(%d), %f (%d), %f \n", cudaGetErrorName(s), mi, mi_i, mx, mx_i, tmps[ll]);
     
     CUevent hStart, hStop;
 	float ms, avg;
@@ -343,27 +372,53 @@ int kernel_2560_1280_64() {
     cudaFuncSetAttribute(kernel_2560_1280_64_OuterProduct_2560_1280, cudaFuncAttributeMaxDynamicSharedMemorySize, maxbytes);
     // warm up
 	kernel_2560_1280_64_winograd_BtdB <<<dim3(16, 16, 16), dim3(160, 6), (6*6*160)<<2 >>> (input, t_input);
-	s = cudaMemcpy(tmps, t_input, nTransInput<<2, cudaMemcpyDeviceToHost);
-	find_minmax(tmps, nTransInput, &mi, &mx, &mi_i, &mx_i);
+	
 	// for (int l = 0; l < nTransInput; l++){
 	// 	if(tmps[l] != 0.0){
 	// 		printf("at %d, non zero \n ", l);
 	// 		break;
 	// 	}		   
 	// }
-	printf("t_input: %s, %f(%d), %f (%d), %f \n", cudaGetErrorName(s), mi, mi_i, mx, mx_i, tmps[ll]);
+	
 	kernel_2560_1280_64_OuterProduct_2560_1280<<<dim3(36, 64), dim3(256, 4), (4*256 + 8*4*256 + 4*256)<<2 >>> (t_input, l_weights, ip);
+	// s = cudaMemcpy(tmps, ip, nInnerProd<<2, cudaMemcpyDeviceToHost);
+	// find_minmax(tmps, nInnerProd, &mi, &mx, &mi_i, &mx_i);
+	// printf("ip 1: %s, %f(%d), %f (%d), %f \n", cudaGetErrorName(s), mi, mi_i, mx, mx_i, tmps[ll]);
+	
+	// s = cudaMemcpy(tmps, t_input, nTransInput<<2, cudaMemcpyDeviceToHost);	
+	// find_minmax(tmps, nTransInput, &mi, &mx, &mi_i, &mx_i);
+	// printf("t_input 2: %s, %f(%d), %f (%d), %f \n", cudaGetErrorName(s), mi, mi_i, mx, mx_i, tmps[ll]);
+	// s = cudaMemcpy(tmps, l_weights, nWeights<<2, cudaMemcpyDeviceToHost);
+	// find_minmax(tmps, nWeights, &mi, &mx, &mi_i, &mx_i);
+	// printf("l_weights 1 : %s, %f(%d), %f (%d), %f \n", cudaGetErrorName(s), mi, mi_i, mx, mx_i, tmps[ll]);
+
 	kernel_2560_1280_64_winograd_AtIA <<<dim3(16, 16, 1280), dim3(6, 6), ((6*6)<<2)>>> (ip, l_bnBias, l_bnScale, output);
+	// s = cudaMemcpy(tmps, ip, nInnerProd<<2, cudaMemcpyDeviceToHost);
+	// find_minmax(tmps, nInnerProd, &mi, &mx, &mi_i, &mx_i);
+	// printf("ip 2: %s, %f(%d), %f (%d), %f \n", cudaGetErrorName(s), mi, mi_i, mx, mx_i, tmps[ll]);
+	// s = cudaMemcpy(tmps, l_weights, nWeights<<2, cudaMemcpyDeviceToHost);
+	// find_minmax(tmps, nWeights, &mi, &mx, &mi_i, &mx_i);
+	// printf("l_weights 2 : %s, %f(%d), %f (%d), %f \n", cudaGetErrorName(s), mi, mi_i, mx, mx_i, tmps[ll]);
     cudaDeviceSynchronize();
 
     cudaEventRecord( hStart, NULL ) ;
     for(int iter=0; iter<iterations; iter++){ 
 	kernel_2560_1280_64_winograd_BtdB <<<dim3(16, 16, 16), dim3(160, 6), (6*6*160)<<2 >>> (input, t_input);
-	s = cudaMemcpy(tmps, t_input, nTransInput<<2, cudaMemcpyDeviceToHost);
-	find_minmax(tmps, nTransInput, &mi, &mx, &mi_i, &mx_i);
-	printf("t_input: %s, %d, %f (%d), %f (%d), %f \n", cudaGetErrorName(s), iter, mi, mi_i, mx, mx_i, tmps[ll]);
+	// s = cudaMemcpy(tmps, t_input, nTransInput<<2, cudaMemcpyDeviceToHost);
+	// find_minmax(tmps, nTransInput, &mi, &mx, &mi_i, &mx_i);
+	// printf("t_input: %s, %d, %f (%d), %f (%d), %f \n", cudaGetErrorName(s), iter, mi, mi_i, mx, mx_i, tmps[ll]);
 	kernel_2560_1280_64_OuterProduct_2560_1280<<<dim3(36, 64), dim3(256, 4), (4*256 + 8*4*256 + 4*256)<<2 >>> (t_input, l_weights, ip);
+	// s = cudaMemcpy(tmps, t_input, nTransInput<<2, cudaMemcpyDeviceToHost);	
+	// s = cudaMemcpy(tmps, ip, nInnerProd<<2, cudaMemcpyDeviceToHost);
+	// find_minmax(tmps, nInnerProd, &mi, &mx, &mi_i, &mx_i);	
+	// printf("ip: %s, %d, %f (%d), %f (%d), %f \n", cudaGetErrorName(s), iter, mi, mi_i, mx, mx_i, tmps[ll]);
+	// s = cudaMemcpy(tmps, l_weights, nWeights<<2, cudaMemcpyDeviceToHost);
+	// find_minmax(tmps, nWeights, &mi, &mx, &mi_i, &mx_i);
+	// printf("l_weights: %s, %f(%d), %f (%d), %f \n", cudaGetErrorName(s), mi, mi_i, mx, mx_i, tmps[ll]);
 	kernel_2560_1280_64_winograd_AtIA <<<dim3(16, 16, 1280), dim3(6, 6), ((6*6)<<2)>>> (ip, l_bnBias, l_bnScale, output);
+	// s = cudaMemcpy(tmps, l_weights, nWeights<<2, cudaMemcpyDeviceToHost);
+	// find_minmax(tmps, nWeights, &mi, &mx, &mi_i, &mx_i);
+	// printf("l_weights: %s, %f(%d), %f (%d), %f \n", cudaGetErrorName(s), mi, mi_i, mx, mx_i, tmps[ll]);
 	}
 	// cudaDeviceSynchronize();
 	cudaEventRecord( hStop, NULL );
@@ -374,7 +429,9 @@ int kernel_2560_1280_64() {
 	printf("MyKernal: TotalTime = %.1f ms and avg = %.3f ms\n", ms, avg); 
 
 	s = cudaMemcpy(tmp, output, nOutput<<2, cudaMemcpyDeviceToHost);
-	printf("A. %s, %f \n", cudaGetErrorName(s), tmp[57183]);
+	// printf("A. %s, %f \n", cudaGetErrorName(s), tmp[57183]);
+	// find_minmax(tmp, nOutput, &mi, &mx, &mi_i, &mx_i);
+	// printf("my result: %s, %f(%d), %f (%d)\n", cudaGetErrorName(s), mi, mi_i, mx, mx_i);
 	cudaCheckError();
 
 	cudaFree(t_input);
@@ -466,8 +523,8 @@ int kernel_2560_1280_64() {
 	if (status != CUDNN_STATUS_SUCCESS) printf("failed15\n");
 
 	// cudnnConvolutionFwdAlgo_t algo = (cudnnConvolutionFwdAlgo_t)6;
-	// cudnnConvolutionFwdAlgo_t algo = CUDNN_CONVOLUTION_FWD_ALGO_GEMM;
-	cudnnConvolutionFwdAlgo_t algo = CUDNN_CONVOLUTION_FWD_ALGO_WINOGRAD;
+	cudnnConvolutionFwdAlgo_t algo = CUDNN_CONVOLUTION_FWD_ALGO_GEMM;
+	// cudnnConvolutionFwdAlgo_t algo = CUDNN_CONVOLUTION_FWD_ALGO_WINOGRAD;
 	// cudnnConvolutionFwdAlgo_t algo = CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_GEMM;
 	// cudnnConvolutionFwdAlgo_t algo = CUDNN_CONVOLUTION_FWD_ALGO_WINOGRAD_NONFUSED;
 
@@ -523,6 +580,8 @@ int kernel_2560_1280_64() {
 	
 	s = cudaMemcpy(tmp_cudnn, output, nOutput<<2, cudaMemcpyDeviceToHost);
 	printf("%s\n", cudaGetErrorName(s));
+	// find_minmax(tmp_cudnn, nOutput, &mi, &mx, &mi_i, &mx_i);
+	// printf("cudnn  result: %s, %f(%d), %f (%d)\n", cudaGetErrorName(s), mi, mi_i, mx, mx_i);
 
 
 

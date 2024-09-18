@@ -331,7 +331,15 @@ int kernel_2560_1280() {
 
 	float *tmp = (float*)malloc(nOutput*4);
 
+
+    // float *tmps = (float*)malloc(nTransInput<<2);
+	float *tmps = (float*)malloc(nInnerProd<<2);
 	int iterations = 10;
+
+	int ll = 6639;
+
+	float mi, mx;
+	int mi_i, mx_i;
     
     CUevent hStart, hStop;
 	float ms, avg;
@@ -342,14 +350,33 @@ int kernel_2560_1280() {
     cudaFuncSetAttribute(kernel_2560_1280_OuterProduct_2560_1280, cudaFuncAttributeMaxDynamicSharedMemorySize, maxbytes);
     // warm up
 	kernel_2560_1280_winograd_BtdB <<<dim3(4, 4, 16), dim3(160, 6), (6*6*160)<<2 >>> (input, t_input);
+	
+	// s = cudaMemcpy(tmps, t_input, nTransInput<<2, cudaMemcpyDeviceToHost);	
+	// find_minmax(tmps, nTransInput, &mi, &mx, &mi_i, &mx_i);
+	// printf("t_input 1: %s, %f(%d), %f (%d), %f \n", cudaGetErrorName(s), mi, mi_i, mx, mx_i, tmps[ll]);
+
 	kernel_2560_1280_OuterProduct_2560_1280<<<dim3(36, 4), dim3(256, 4), (4*256 + 8*4*256 + 4*256)<<2 >>> (t_input, l_weights, ip);
+
+	// s = cudaMemcpy(tmps, t_input, nTransInput<<2, cudaMemcpyDeviceToHost);	
+	s = cudaMemcpy(tmps, ip, nInnerProd<<2, cudaMemcpyDeviceToHost);
+	// find_minmax(tmps, nTransInput, &mi, &mx, &mi_i, &mx_i);
+	find_minmax(tmps, nInnerProd, &mi, &mx, &mi_i, &mx_i);
+	printf("t_input 2: %s, %f(%d), %f (%d), %f \n", cudaGetErrorName(s), mi, mi_i, mx, mx_i, tmps[ll]);
+
 	kernel_2560_1280_winograd_AtIA <<<dim3(4, 4, 1280), dim3(6, 6), ((6*6)<<2)>>> (ip, l_bnBias, l_bnScale, output);
     cudaDeviceSynchronize();
 
     cudaEventRecord( hStart, NULL ) ;
     for(int iter=0; iter<iterations; iter++){ 
 	kernel_2560_1280_winograd_BtdB <<<dim3(4, 4, 16), dim3(160, 6), (6*6*160)<<2 >>> (input, t_input);
+	// s = cudaMemcpy(tmps, t_input, nTransInput<<2, cudaMemcpyDeviceToHost);
+	// find_minmax(tmps, nTransInput, &mi, &mx, &mi_i, &mx_i);
+	// printf("t_input: %s, %d, %f (%d), %f (%d), %f \n", cudaGetErrorName(s), iter, mi, mi_i, mx, mx_i, tmps[ll]);
 	kernel_2560_1280_OuterProduct_2560_1280<<<dim3(36, 4), dim3(256, 4), (4*256 + 8*4*256 + 4*256)<<2 >>> (t_input, l_weights, ip);
+	s = cudaMemcpy(tmps, ip, nInnerProd<<2, cudaMemcpyDeviceToHost);
+	// find_minmax(tmps, nTransInput, &mi, &mx, &mi_i, &mx_i);
+	find_minmax(tmps, nInnerProd, &mi, &mx, &mi_i, &mx_i);
+	printf("ip: %s, %d, %f (%d), %f (%d), %f \n", cudaGetErrorName(s), iter, mi, mi_i, mx, mx_i, tmps[ll]);
 	kernel_2560_1280_winograd_AtIA <<<dim3(4, 4, 1280), dim3(6, 6), ((6*6)<<2)>>> (ip, l_bnBias, l_bnScale, output);
 	}
 	// cudaDeviceSynchronize();

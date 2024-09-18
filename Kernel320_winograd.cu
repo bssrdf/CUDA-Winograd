@@ -309,8 +309,8 @@ int kernel_320() {
 	cudaFree(output);
 	cudaFree(l_weights);
 	cudaFree(l_bias);
-	cudaFree(l_bnBias);
-	cudaFree(l_bnScale);
+	// cudaFree(l_bnBias);
+	// cudaFree(l_bnScale);
 	cudaFree(ip);
 	// cudaFree(input);
 
