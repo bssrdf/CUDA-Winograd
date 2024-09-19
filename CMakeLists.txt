@@ -1,30 +1,36 @@
-cmake_minimum_required(VERSION 3.12)  # CMake version needs to support CUDA
-
-# Project name
+cmake_minimum_required(VERSION 3.10)
 project(CUDA_Winograd LANGUAGES CXX CUDA)
 
-# Specify the C++ standard (if required)
+# Set the standard for C++
 set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Find CUDA package
+# Enable CUDA
 find_package(CUDA REQUIRED)
 
-# Include directories (adjust path if necessary)
-include_directories(${PROJECT_SOURCE_DIR}/include)
-
-# Source files (adjust filenames if necessary)
+# Add source files
 set(SOURCES
-    src/winograd.cu
-    src/main.cpp
+    main.cu
+    Kernel128_winograd.cu
+    Kernel256_winograd.cu
+    Kernel512_winograd.cu
+    util.c
 )
 
-# Set target executable
-add_executable(CUDA_Winograd ${SOURCES})
+# Specify the executable
+add_executable(Test ${SOURCES})
 
-# Link against CUDA
-target_link_libraries(CUDA_Winograd ${CUDA_LIBRARIES})
+# Set the architecture (modify according to your GPU)
+set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -arch=sm_61")
 
-# Set CUDA-specific properties if needed
-set_target_properties(CUDA_Winograd PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+# Link CUDA libraries
+target_link_libraries(Test ${CUDA_LIBRARIES})
 
-# Include any additional flags you need for your project (adjust as necessary)
+# Set compile options
+set_target_properties(Test PROPERTIES
+    CUDA_SEPARABLE_COMPILATION ON
+    CUDA_ARCHITECTURES "61"  # Modify based on your GPU
+)
+
+# Specify directories for includes (if needed)
+include_directories(${CMAKE_SOURCE_DIR}/include)
